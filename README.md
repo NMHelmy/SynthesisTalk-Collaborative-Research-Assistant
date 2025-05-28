@@ -1,1 +1,0 @@
-# SynthesisTalk-Collaborative-Research-Assistant
