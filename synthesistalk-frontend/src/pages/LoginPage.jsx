@@ -1,62 +1,121 @@
-import React, { useState } from "react";
+import { FaEnvelope, FaLock } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
+import React, { useState } from "react";
+
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const [formData, setFormData] = useState({
-    email: "",
-    password: "",
-  });
 
-  const handleChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
-  };
-
-  const handleSubmit = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-    // TODO: Add login logic here (e.g., API call)
-    console.log("Login with:", formData);
-  };
+
+    const email = e.target.email.value;
+    const password = e.target.password.value;
+
+    if (!email || !password) {
+      alert("Please enter both email and password");
+      return;
+    }
+
+    try {
+      const response = await fetch("http://localhost:5000/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        // Save token or user info if needed
+        localStorage.setItem("token", data.token);
+        navigate("/chat"); // go to chat page
+      } else {
+        alert(data.message || "Invalid email or password");
+      }
+    } catch (error) {
+      console.error("Login error:", error);
+      alert("Something went wrong. Try again.");
+    }
+};
+
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
 
   return (
-    <div className="min-h-screen bg-gray-800 text-white flex flex-col items-center justify-center px-4">
-      <h2 className="text-3xl font-bold mb-6">Welcome back!</h2>
-      <form
-        onSubmit={handleSubmit}
-        className="flex flex-col space-y-4 w-full max-w-sm"
-      >
-        <input
-          type="text"
-          name="email"
-          placeholder="Email or Username"
-          value={formData.email}
-          onChange={handleChange}
-          className="bg-gray-500 text-white px-4 py-2 rounded-md placeholder-white focus:outline-none"
-        />
-        <input
-          type="password"
-          name="password"
-          placeholder="Password"
-          value={formData.password}
-          onChange={handleChange}
-          className="bg-gray-500 text-white px-4 py-2 rounded-md placeholder-white focus:outline-none"
-        />
+    <div className="min-h-screen flex flex-col items-center justify-center bg-[#2c2c2c] text-white relative overflow-hidden">
+      {/* Background image - Large, black, faded */}
+      <img
+        src="/assets/logo.png"
+        alt="Background Logo"
+        className="absolute w-[900px]"
+        style={{
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          pointerEvents: "none",
+          filter: "brightness(0)",
+        }}
+      />
+
+      <h1 className="text-5xl mb-8 z-10"style={{ fontFamily: '"Abril Fatface", cursive' }}>Welcome back !</h1>
+
+      <form onSubmit={handleLogin} className="w-full max-w-sm space-y-4 z-10">
+        {/* Email input */}
+        <div className="flex items-center bg-[#5A5A5A] text-black rounded-md px-9 py-3 shadow-lg">
+          <FaEnvelope className="mr-3 text-white text-2xl" />
+          <input
+            name="email"
+            type="email"
+            placeholder="Email or username"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="bg-transparent outline-none flex-1 placeholder-white text-xl"
+            style={{ fontFamily: '"Abril Fatface", cursive' }}
+          />
+        </div>
+
+        {/* Password input */}
+        <div className="flex items-center bg-[#5A5A5A] text-black rounded-md px-9 py-3 shadow-lg">
+          <FaLock className="mr-3 text-white text-2xl" />
+          <input
+            name="password"
+            type="password"
+            placeholder="Password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="bg-transparent outline-none flex-1 placeholder-white text-xl"
+            style={{ fontFamily: '"Abril Fatface", cursive' }}
+          />
+        </div>
+
+        {/* Login button */}
         <button
           type="submit"
-          className="bg-gray-600 py-2 rounded-md hover:bg-gray-700"
+          className={`bg-[#5A5A5A] text-white py-3 w-full rounded-md shadow-lg text-xl ${
+    !email || !password ? "opacity-50 cursor-not-allowed" : ""
+  }`}
+          disabled={!email || !password}
+          style={{ fontFamily: '"Abril Fatface", cursive' }}
         >
-          Sign in
+          Log In
         </button>
-        <div className="text-sm text-center mt-2 text-gray-400">
-          <p className="hover:underline cursor-pointer" onClick={() => alert("Forgot Password")}>Forgot Password?</p>
-          <p>
-            Don’t have an account?{' '}
-            <span className="hover:underline cursor-pointer text-blue-400" onClick={() => navigate("/signup")}>
-              Sign Up
-            </span>
-          </p>
-        </div>
       </form>
+
+      {/* Footer links */}
+      <div className="mt-6 text-center text-white text-sm space-y-1 z-10"style={{ fontFamily: '"Abril Fatface", cursive' }}>
+        <p>Forget Password?</p>
+        <p>
+          Don't have an account?{" "}
+          <span
+            className="underline cursor-pointer"
+            onClick={() => navigate("/signup")}
+          >
+            Sign up
+          </span>
+        </p>
+      </div>
     </div>
   );
 }
