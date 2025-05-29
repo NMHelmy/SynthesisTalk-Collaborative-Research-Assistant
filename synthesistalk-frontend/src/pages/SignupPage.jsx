@@ -8,6 +8,7 @@ import {
   fetchSignInMethodsForEmail,
 } from "firebase/auth";
 import { auth } from "../firebase";
+import { FiUser, FiMail, FiLock } from "react-icons/fi";
 
 export default function SignupPage() {
   const navigate = useNavigate();
@@ -38,7 +39,6 @@ export default function SignupPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    // Reset all error messages
     setNameError("");
     setEmailError("");
     setPasswordError("");
@@ -92,7 +92,6 @@ export default function SignupPage() {
     } catch (error) {
       const code = error.code;
 
-      // Display all possible applicable Firebase errors
       if (code === "auth/invalid-email") {
         setEmailError("Please enter a valid email address.");
       }
@@ -113,58 +112,97 @@ export default function SignupPage() {
 
   return (
     <div className="min-h-screen bg-[#2c2c2c] flex items-center justify-center relative px-4 text-white">
+      {/* Background logo */}
       <img
         src="/assets/logo.png"
         alt="Background Logo"
-        className="absolute inset-0 w-full h-full object-cover z-0"
+        className="absolute w-[900px] z-0"
+        style={{
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          pointerEvents: "none",
+          filter: "brightness(0)",
+        }}
       />
 
-      <form onSubmit={handleSubmit} className="z-10 w-full max-w-sm">
-        <div className="flex flex-col space-y-4">
-          <input
-            type="text"
-            name="firstName"
-            placeholder="Full Name"
-            value={formData.firstName}
-            onChange={handleChange}
-            className="w-70 bg-gray-400 text-white font-bold px-4 py-2 rounded-md placeholder-white focus:outline-none"
-          />
-          {nameError && <p className="text-sm text-red-500">{nameError}</p>}
-
-          <input
-            type="email"
-            name="email"
-            placeholder="Email"
-            value={formData.email}
-            onChange={handleChange}
-            className="bg-gray-400 text-white font-bold px-4 py-2 rounded-md placeholder-white focus:outline-none"
-          />
-          {emailError && <p className="text-sm text-red-500">{emailError}</p>}
-
-          <input
-            type="password"
-            name="password"
-            placeholder="Password"
-            value={formData.password}
-            onChange={handleChange}
-            className="bg-gray-400 text-white font-bold px-4 py-2 rounded-md placeholder-white focus:outline-none"
-          />
-          {passwordError && <p className="text-sm text-red-500">{passwordError}</p>}
-
-          <input
-            type="password"
-            name="confirmPassword"
-            placeholder="Confirm Password"
-            value={formData.confirmPassword}
-            onChange={handleChange}
-            className="bg-gray-400 text-white font-bold px-4 py-2 rounded-md placeholder-white focus:outline-none"
-          />
-          {confirmPasswordError && <p className="text-sm text-red-500">{confirmPasswordError}</p>}
+      <form onSubmit={handleSubmit} className="z-10 w-full max-w-sm space-y-4">
+        {/* Full Name */}
+        <div className="flex flex-col items-start w-full">
+          <div className="flex items-center w-full bg-[#5A5A5A] px-6 py-3 rounded-md shadow-lg">
+            <FiUser className="mr-3 text-white text-2xl" />
+            <input
+              type="text"
+              name="firstName"
+              placeholder="Full Name"
+              value={formData.firstName}
+              onChange={handleChange}
+              className="bg-transparent outline-none w-full placeholder-white text-xl text-white"
+              style={{ fontFamily: '"Abril Fatface", cursive' }}
+              required
+            />
+          </div>
+          {nameError && <p className="text-sm text-red-500 mt-1">{nameError}</p>}
         </div>
 
+        {/* Email */}
+        <div className="flex flex-col items-start w-full">
+          <div className="flex items-center w-full bg-[#5A5A5A] px-6 py-3 rounded-md shadow-lg">
+            <FiMail className="mr-3 text-white text-2xl" />
+            <input
+              type="email"
+              name="email"
+              placeholder="Email"
+              value={formData.email}
+              onChange={handleChange}
+              className="bg-transparent outline-none w-full placeholder-white text-xl text-white"
+              style={{ fontFamily: '"Abril Fatface", cursive' }}
+              required
+            />
+          </div>
+          {emailError && <p className="text-sm text-red-500 mt-1">{emailError}</p>}
+        </div>
+
+        {/* Password */}
+        <div className="flex flex-col items-start w-full">
+          <div className="flex items-center w-full bg-[#5A5A5A] px-6 py-3 rounded-md shadow-lg">
+            <FiLock className="mr-3 text-white text-2xl" />
+            <input
+              type="password"
+              name="password"
+              placeholder="Password"
+              value={formData.password}
+              onChange={handleChange}
+              className="bg-transparent outline-none w-full placeholder-white text-xl text-white"
+              style={{ fontFamily: '"Abril Fatface", cursive' }}
+              required
+            />
+          </div>
+          {passwordError && <p className="text-sm text-red-500 mt-1">{passwordError}</p>}
+        </div>
+
+        {/* Confirm Password */}
+        <div className="flex flex-col items-start w-full">
+          <div className="flex items-center w-full bg-[#5A5A5A] px-6 py-3 rounded-md shadow-lg">
+            <FiLock className="mr-3 text-white text-2xl" />
+            <input
+              type="password"
+              name="confirmPassword"
+              placeholder="Confirm Password"
+              value={formData.confirmPassword}
+              onChange={handleChange}
+              className="bg-transparent outline-none w-full placeholder-white text-xl text-white"
+              style={{ fontFamily: '"Abril Fatface", cursive' }}
+              required
+            />
+          </div>
+          {confirmPasswordError && <p className="text-sm text-red-500 mt-1">{confirmPasswordError}</p>}
+        </div>
+
+        {/* General Message */}
         {generalMessage && (
           <p
-            className={`text-sm mt-4 ${
+            className={`text-sm mt-1 ${
               generalMessage.toLowerCase().includes("success") ? "" : "text-red-500"
             }`}
           >
@@ -172,16 +210,29 @@ export default function SignupPage() {
           </p>
         )}
 
-        <div className="mt-12 flex justify-center">
+        {/* Submit Button — now matches login */}
+        <div className="mt-8 flex justify-center">
           <button
             type="submit"
-            className="bg-gray-400 text-white font-bold py-2 px-6 rounded-md hover:bg-gray-500 transition"
+            className={`bg-[#5A5A5A] text-white py-3 w-full rounded-md shadow-lg text-xl ${
+              !formData.firstName || !formData.email || !formData.password || !formData.confirmPassword
+                ? "opacity-50 cursor-not-allowed"
+                : ""
+            }`}
+            disabled={
+              !formData.firstName ||
+              !formData.email ||
+              !formData.password ||
+              !formData.confirmPassword
+            }
+            style={{ fontFamily: '"Abril Fatface", cursive' }}
           >
             Create your account
           </button>
         </div>
 
-        <p className="text-center text-sm mt-6">
+        {/* Navigation to Login — blue text */}
+        <p className="text-center text-sm mt-6" style={{ fontFamily: '"Abril Fatface", cursive' }}>
           Already have an account?{" "}
           <span
             className="text-blue-400 hover:underline cursor-pointer font-semibold"

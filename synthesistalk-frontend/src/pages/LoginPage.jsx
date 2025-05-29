@@ -3,7 +3,10 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { FiMail, FiLock } from "react-icons/fi";
-import { signInWithEmailAndPassword } from "firebase/auth";
+import {
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail,
+} from "firebase/auth";
 import { auth } from "../firebase";
 
 export default function LoginPage() {
@@ -16,7 +19,6 @@ export default function LoginPage() {
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
-    // Clear field-specific errors while typing
     if (e.target.name === "email") setEmailError("");
     if (e.target.name === "password") setPasswordError("");
     setGeneralMessage("");
@@ -24,8 +26,6 @@ export default function LoginPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
-    // Reset all error messages
     setEmailError("");
     setPasswordError("");
     setGeneralMessage("");
@@ -36,8 +36,6 @@ export default function LoginPage() {
       setTimeout(() => navigate("/chat"), 1000);
     } catch (error) {
       const code = error.code;
-
-      // Multiple errors may apply
       if (code === "auth/invalid-email") {
         setEmailError("Please enter a valid email address.");
       }
@@ -63,86 +61,128 @@ export default function LoginPage() {
     }
   };
 
+  const handleForgotPassword = async () => {
+    if (!formData.email) {
+      setEmailError("Please enter your email to reset password.");
+      return;
+    }
+
+    try {
+      await sendPasswordResetEmail(auth, formData.email);
+      setGeneralMessage("Password reset email sent.");
+    } catch (error) {
+      const code = error.code;
+      if (code === "auth/invalid-email") {
+        setEmailError("Invalid email format.");
+      } else if (code === "auth/user-not-found") {
+        setEmailError("No user found with this email.");
+      } else {
+        setGeneralMessage("Failed to send reset email. Try again.");
+      }
+    }
+  };
+
   return (
-    <div
-      className="min-h-screen bg-cover bg-center relative"
-      style={{ backgroundImage: "url('/assets/logo.png')" }}
-    >
-      <div className="absolute inset-0 bg-gray-900 bg-opacity-70" />
-      <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-white text-center">
-        <h2 className="text-5xl font-bold mb-10">Welcome back!</h2>
-        <form onSubmit={handleSubmit} className="flex flex-col space-y-4 w-[300px]">
-          
-          {/* Email */}
-          <div className="flex flex-col items-start w-full">
-            <div className="flex items-center w-full bg-gray-300 bg-opacity-90 text-black px-3 py-2 rounded-md">
-              <FiMail className="mr-2" />
-              <input
-                type="email"
-                name="email"
-                placeholder="Email"
-                value={formData.email}
-                onChange={handleChange}
-                className="bg-transparent outline-none w-full placeholder-black font-semibold"
-                required
-              />
-            </div>
-            {emailError && <p className="text-sm text-red-500 mt-1">{emailError}</p>}
+    <div className="min-h-screen flex flex-col items-center justify-center bg-[#2c2c2c] text-white relative overflow-hidden">
+      {/* Background logo */}
+      <img
+        src="/assets/logo.png"
+        alt="Background Logo"
+        className="absolute w-[900px]"
+        style={{
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          pointerEvents: "none",
+          filter: "brightness(0)",
+        }}
+      />
+
+      <h1 className="text-5xl mb-8 z-10" style={{ fontFamily: '"Abril Fatface", cursive' }}>
+        Welcome back!
+      </h1>
+
+      <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-4 z-10">
+        {/* Email input */}
+        <div className="flex flex-col items-start w-full">
+          <div className="flex items-center w-full bg-[#5A5A5A] text-black px-6 py-3 rounded-md shadow-lg">
+            <FiMail className="mr-3 text-white text-2xl" />
+            <input
+              type="email"
+              name="email"
+              placeholder="Email"
+              value={formData.email}
+              onChange={handleChange}
+              className="bg-transparent outline-none w-full placeholder-white text-xl text-white"
+              style={{ fontFamily: '"Abril Fatface", cursive' }}
+              required
+            />
           </div>
+          {emailError && <p className="text-sm text-red-500 mt-1">{emailError}</p>}
+        </div>
 
-          {/* Password */}
-          <div className="flex flex-col items-start w-full">
-            <div className="flex items-center w-full bg-gray-300 bg-opacity-90 text-black px-3 py-2 rounded-md">
-              <FiLock className="mr-2" />
-              <input
-                type="password"
-                name="password"
-                placeholder="Password"
-                value={formData.password}
-                onChange={handleChange}
-                className="bg-transparent outline-none w-full placeholder-black font-semibold"
-                required
-              />
-            </div>
-            {passwordError && <p className="text-sm text-red-500 mt-1">{passwordError}</p>}
+        {/* Password input */}
+        <div className="flex flex-col items-start w-full">
+          <div className="flex items-center w-full bg-[#5A5A5A] text-black px-6 py-3 rounded-md shadow-lg">
+            <FiLock className="mr-3 text-white text-2xl" />
+            <input
+              type="password"
+              name="password"
+              placeholder="Password"
+              value={formData.password}
+              onChange={handleChange}
+              className="bg-transparent outline-none w-full placeholder-white text-xl text-white"
+              style={{ fontFamily: '"Abril Fatface", cursive' }}
+              required
+            />
           </div>
+          {passwordError && <p className="text-sm text-red-500 mt-1">{passwordError}</p>}
+        </div>
 
-          {/* General message */}
-          {generalMessage && (
-            <p
-              className={`text-sm mt-1 ${
-                generalMessage.toLowerCase().includes("success") ? "" : "text-red-500"
-              }`}
-            >
-              {generalMessage}
-            </p>
-          )}
-
-          <button
-            type="submit"
-            className="bg-gray-300 text-black font-semibold py-2 rounded-md hover:bg-gray-400"
+        {/* General Message */}
+        {generalMessage && (
+          <p
+            className={`text-sm mt-1 ${
+              generalMessage.toLowerCase().includes("success") ? "" : "text-red-500"
+            }`}
           >
-            Sign in
-          </button>
+            {generalMessage}
+          </p>
+        )}
 
-          <div className="text-sm text-white mt-4">
-            <p
-              className="hover:underline cursor-pointer"
-              onClick={() => setGeneralMessage("Forgot Password?")}
-            >
-              Forgot Password?
-            </p>
-            <p>
-              Don’t have an account?{" "}
-              <span
-                className="hover:underline cursor-pointer font-bold"
-                onClick={() => navigate("/signup")}
-              >
-                Sign up
-              </span>
-            </p>
-          </div>
-        </form>
+        {/* Login button */}
+        <button
+          type="submit"
+          className={`bg-[#5A5A5A] text-white py-3 w-full rounded-md shadow-lg text-xl ${
+            !formData.email || !formData.password ? "opacity-50 cursor-not-allowed" : ""
+          }`}
+          disabled={!formData.email || !formData.password}
+          style={{ fontFamily: '"Abril Fatface", cursive' }}
+        >
+          Log In
+        </button>
+      </form>
+
+      {/* Footer links */}
+      <div
+        className="mt-6 text-center text-white text-sm space-y-1 z-10"
+        style={{ fontFamily: '"Abril Fatface", cursive' }}
+      >
+        <p
+          className="text-blue-400 hover:underline cursor-pointer font-semibold"
+          onClick={handleForgotPassword}
+        >
+          Forgot Password?
+        </p>
+        <p>
+          Don't have an account?{" "}
+          <span
+            className="text-blue-400 underline cursor-pointer font-semibold"
+            onClick={() => navigate("/signup")}
+          >
+            Sign up
+          </span>
+        </p>
       </div>
     </div>
   );
