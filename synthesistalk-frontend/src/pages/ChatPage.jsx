@@ -1,16 +1,32 @@
 // src/pages/ChatPage.jsx
 
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { FiMenu, FiLogOut } from "react-icons/fi";
 import { useNavigate } from "react-router-dom";
 import { auth } from "../firebase";
+import { uploadDocument, listFiles, deleteFile } from "../api/api";
 
 export default function ChatPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [files, setFiles] = useState([]);
+  const fileInputRef = useRef(null);
   const navigate = useNavigate();
 
   const user = auth.currentUser;
+
+  useEffect(() => {
+    fetchFiles();
+  }, []);
+
+  const fetchFiles = async () => {
+    try {
+      const data = await listFiles();
+      setFiles(data.files || []);
+    } catch (error) {
+      console.error("Failed to fetch files", error);
+    }
+  };
 
   const handleLogout = async () => {
     await auth.signOut();
@@ -19,6 +35,30 @@ export default function ChatPage() {
 
   const handleNewChat = () => {
     alert("New chat started!");
+  };
+
+  const handleUploadClick = () => {
+    fileInputRef.current.click(); // trigger hidden file input
+  };
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      await uploadDocument(file);
+      fetchFiles(); // refresh file list
+    } catch (err) {
+      console.error("Upload failed", err);
+    }
+  };
+
+  const handleDelete = async (filename) => {
+    try {
+      await deleteFile(filename);
+      fetchFiles();
+    } catch (err) {
+      console.error("Delete failed", err);
+    }
   };
 
   return (
@@ -41,9 +81,42 @@ export default function ChatPage() {
               <span>New Topic</span>
             </button>
 
-            <div className="flex items-center gap-3 text-white mb-4">
-              <img src="/assets/folder_icon.png" alt="Files" className="w-5 h-5" />
-              <span>Uploaded Files</span>
+            <div className="flex flex-col gap-2 text-white mb-4">
+              <div className="flex items-center gap-3">
+                <img src="/assets/folder_icon.png" alt="Files" className="w-5 h-5" />
+                <span>Uploaded Files</span>
+              </div>
+              <ul className="ml-8 list-disc text-sm text-gray-300">
+                {files.map((file, i) => (
+                    <li key={i} className="flex items-center gap-2">
+                        <a
+                        href={`http://localhost:8000/uploads/${encodeURIComponent(file.filename)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-400 hover:underline"
+                        >
+                        {file.filename}
+                        </a>
+                        <button
+                            onClick={async () => {
+                                try {
+                                const res = await fetch(`http://localhost:8000/extract/${encodeURIComponent(file.filename)}`);
+                                const data = await res.json();
+                                alert(data.text); // You can also display it in a modal
+                                } catch (err) {
+                                alert("Failed to extract text");
+                                }
+                            }}
+                            className="text-purple-400 hover:text-purple-600 text-xs"
+                            >
+                            Extract
+                            </button>
+
+                    </li>
+                    ))}
+
+                </ul>
+
             </div>
 
             <button
@@ -76,7 +149,15 @@ export default function ChatPage() {
 
         <footer className="w-full max-w-2xl bg-[#9b9b9b] rounded-lg px-6 py-6 text-black shadow-md">
           <div className="flex items-center gap-2 mb-5">
-            <img src="/assets/plus_icon.png" alt="Add" className="w-5 h-5" />
+            <button onClick={handleUploadClick}>
+              <img src="/assets/plus_icon.png" alt="Add" className="w-5 h-5" />
+            </button>
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileChange}
+              style={{ display: "none" }}
+            />
             <input
               type="text"
               placeholder="Let's chat..."
