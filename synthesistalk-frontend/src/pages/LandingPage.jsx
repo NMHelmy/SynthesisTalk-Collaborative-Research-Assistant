@@ -1,4 +1,4 @@
-import React from "react"; 
+import React from "react";
 import { useNavigate } from "react-router-dom";
 
 export default function LandingPage() {
@@ -16,6 +16,7 @@ export default function LandingPage() {
         <div className="flex flex-col" style={{ fontFamily: '"Abril Fatface", cursive' }}>
           <h1 className="text-8xl leading-none">Paper Mind</h1>
           <p className="text-3xl mt-2 self-end">SynthesisTalk....</p>
+
         </div>
       </div>
 
@@ -36,7 +37,6 @@ export default function LandingPage() {
           Log In
         </button>
       </div>
-
       {/* Footer */}
       <p
         className="mt-16 text-4xl text-center"
