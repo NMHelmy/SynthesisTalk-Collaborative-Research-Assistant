@@ -1,10 +1,11 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 import os
 from pathlib import Path
-from PyPDF2 import PdfReader
-import docx
 from urllib.parse import unquote
-import fitz  
+import docx
+import fitz  # PyMuPDF
+from pdf2image import convert_from_path
+import pytesseract
 
 router = APIRouter()
 
@@ -16,26 +17,34 @@ EXTRACTED_DIR.mkdir(exist_ok=True)
 def extract_text(file_path: Path, content_type: str) -> str:
     if content_type == "application/pdf":
         try:
+            # First try PyMuPDF
             doc = fitz.open(str(file_path))
             text = "\n".join([page.get_text() for page in doc])
             doc.close()
-            return text
+            if text.strip():
+                print("✅ Extracted text using fitz.")
+                return text
+            else:
+                # Fallback to OCR
+                print("⚠️ No selectable text found — using OCR fallback.")
+                images = convert_from_path(str(file_path))
+                ocr_text = "\n".join([pytesseract.image_to_string(img) for img in images])
+                return ocr_text
         except Exception as e:
-            raise ValueError(f"fitz extraction failed: {e}")
+            raise ValueError(f"PDF extraction failed: {e}")
+    
     elif content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
         doc = docx.Document(str(file_path))
         return "\n".join(para.text for para in doc.paragraphs if para.text.strip())
+
     elif file_path.suffix == ".txt":
         return file_path.read_text(encoding="utf-8")
-    raise ValueError("Unsupported file type")
 
+    raise ValueError("Unsupported file type")
 
 @router.get("/extract/{filename}")
 def extract_existing_file(filename: str):
-    from urllib.parse import unquote
     filename = unquote(filename)
-
-    # Use exact match – do not alter name if already valid
     file_path = UPLOAD_DIR / filename
 
     print("🔍 Requested filename:", filename)
@@ -57,19 +66,19 @@ def extract_existing_file(filename: str):
 
     try:
         extracted_text = extract_text(file_path, content_type)
+        print("📄 Extracted Text Preview:\n", extracted_text[:1000])
     except Exception as e:
-        print("❌ Extraction error:", e) 
+        print("❌ Extraction error:", e)
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
 
-    if not extracted_text:
-        raise HTTPException(status_code=500, detail="Failed to extract text")
+    if not extracted_text.strip():
+        raise HTTPException(status_code=500, detail="No extractable text found.")
 
     return {
         "filename": filename,
-        "text": extracted_text[:5000],  # safe truncation
+        "text": extracted_text[:5000],
         "message": "Text extracted successfully"
     }
-
 
 @router.post("/extract")
 async def upload_and_extract(file: UploadFile = File(...)):
@@ -87,12 +96,11 @@ async def upload_and_extract(file: UploadFile = File(...)):
 
     try:
         extracted_text = extract_text(file_path, file.content_type)
-        print("📄 Extracted Text Preview:\n", extracted_text[:1000])
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
 
-    if not extracted_text:
-        raise HTTPException(status_code=500, detail="Failed to extract text")
+    if not extracted_text.strip():
+        raise HTTPException(status_code=500, detail="No extractable text found.")
 
     extracted_file = EXTRACTED_DIR / f"{safe_filename}.txt"
     extracted_file.write_text(extracted_text, encoding="utf-8")
@@ -101,5 +109,5 @@ async def upload_and_extract(file: UploadFile = File(...)):
         "filename": file.filename,
         "extracted_file": extracted_file.name,
         "message": "Text extracted and saved successfully",
-        "text": extracted_text
+        "text": extracted_text[:5000]
     }
