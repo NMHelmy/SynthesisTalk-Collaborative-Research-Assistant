@@ -44,7 +44,7 @@ app.include_router(extract.router, prefix="/api")
 def root():
     return {"status": "SynthesisTalk Backend Running"}
 
-@app.post("/chat")
+@app.post("/api/chat")
 async def chat(request: Request):
     data = await request.json()
     prompt = data.get("prompt")

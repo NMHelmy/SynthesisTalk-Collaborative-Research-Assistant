@@ -3,29 +3,45 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import os
 import json
+from starlette.responses import FileResponse
+from urllib.parse import unquote
 
 router = APIRouter()
 
 DATA_PATH = "data/files.json"
+UPLOAD_FOLDER = "uploads"
 
 class FileEntry(BaseModel):
     filename: str
     content: str
 
 @router.get("/files")
-def list_files():
+async def list_files():
     if not os.path.exists(DATA_PATH):
         return {"files": []}
-    try:
+    with open(DATA_PATH, "r") as f:
+        files = json.load(f)
+    return {"files": files}
+
+@router.delete("/files/{filename}")
+async def delete_file(filename: str):
+    decoded_filename = unquote(filename)
+    file_path = os.path.join(UPLOAD_FOLDER, decoded_filename)
+
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    os.remove(file_path)
+
+    # Also remove from files.json
+    if os.path.exists(DATA_PATH):
         with open(DATA_PATH, "r") as f:
-            content = json.load(f)
-        # Validate structure
-        if isinstance(content, list) and all("filename" in f for f in content):
-            return {"files": content}
-        else:
-            return {"files": []}
-    except json.JSONDecodeError:
-        return {"files": []}
+            data = json.load(f)
+        data = [f for f in data if f["filename"] != decoded_filename]
+        with open(DATA_PATH, "w") as f:
+            json.dump(data, f, indent=2)
+
+    return {"message": f"{decoded_filename} deleted"}
 
 @router.post("/files")
 def save_file(entry: FileEntry):
@@ -44,22 +60,7 @@ def save_file(entry: FileEntry):
     with open(DATA_PATH, "w") as f:
         json.dump(data, f, indent=2)
     return {"message": f"Saved {entry.filename}"}
-
-@router.delete("/files/{filename}")
-def delete_file(filename: str):
-    if not os.path.exists(DATA_PATH):
-        raise HTTPException(status_code=404, detail="No files to delete.")
-    with open(DATA_PATH, "r") as f:
-        try:
-            data = json.load(f)
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=500, detail="Corrupted file store.")
-    filtered = [f for f in data if f["filename"] != filename]
-    if len(filtered) == len(data):
-        raise HTTPException(status_code=404, detail="File not found.")
-    with open(DATA_PATH, "w") as f:
-        json.dump(filtered, f, indent=2)
-    return {"message": f"Deleted {filename}"}
+from urllib.parse import unquote  # Add this at the top
 
 @router.put("/files/{filename}")
 def update_file(filename: str, entry: FileEntry):
