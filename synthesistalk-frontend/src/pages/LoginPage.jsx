@@ -1,8 +1,6 @@
-// src/pages/LoginPage.jsx
-
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { FiMail, FiLock } from "react-icons/fi";
+import { FiMail, FiLock, FiEye, FiEyeOff } from "react-icons/fi";
 import {
   signInWithEmailAndPassword,
   sendPasswordResetEmail,
@@ -16,6 +14,7 @@ export default function LoginPage() {
   const [emailError, setEmailError] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [generalMessage, setGeneralMessage] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -123,10 +122,10 @@ export default function LoginPage() {
 
         {/* Password input */}
         <div className="flex flex-col items-start w-full">
-          <div className="flex items-center w-full bg-[#5A5A5A] text-black px-6 py-3 rounded-md shadow-lg">
+          <div className="flex items-center w-full bg-[#5A5A5A] px-6 py-3 rounded-md shadow-lg">
             <FiLock className="mr-3 text-white text-2xl" />
             <input
-              type="password"
+              type={showPassword ? "text" : "password"}
               name="password"
               placeholder="Password"
               value={formData.password}
@@ -135,6 +134,13 @@ export default function LoginPage() {
               style={{ fontFamily: '"Abril Fatface", cursive' }}
               required
             />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="ml-2 text-white focus:outline-none"
+            >
+              {showPassword ? <FiEyeOff className="text-xl" /> : <FiEye className="text-xl" />}
+            </button>
           </div>
           {passwordError && <p className="text-sm text-red-500 mt-1">{passwordError}</p>}
         </div>
