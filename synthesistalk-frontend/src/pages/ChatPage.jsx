@@ -13,26 +13,13 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [sessionId, setSessionId] = useState(null);
   const [reasoningMode, setReasoningMode] = useState("normal");
+  const [sessionId, setSessionId] = useState(null);
   const [files, setFiles] = useState([]);
   const fileInputRef = useRef(null);
   const navigate = useNavigate();
   const user = auth.currentUser;
-  const [showFiles, setShowFiles] = useState(false);
-  const [uploadedFilesToSend, setUploadedFilesToSend] = useState([]);
-  const [chatHistory, setChatHistory] = useState([]);
-  const [chatId, setChatId] = useState(() => Date.now().toString());
 
-  useEffect(() => {
-    const fetchChats = async () => {
-      const history = await loadChatsFromFirestore();
-      setChatHistory(history);
-    };
-    fetchChats();
-  }, []);
-
-  // Generate or load a persistent sessionId
   useEffect(() => {
     let id = localStorage.getItem("sessionId");
     if (!id) {
@@ -50,13 +37,39 @@ export default function ChatPage() {
   const handleNewChat = () => {
     setMessages([]);
     setInput("");
-    setChatId(Date.now().toString());
   };
 
-  const saveChatHistory = async (chatId, title, messages) => {
-    await saveChatToFirestore(chatId, title, messages);
-    const history = await loadChatsFromFirestore();
-    setChatHistory(history);
+  const handleVisualize = async () => {
+    const text = messages
+      .filter((m) => m.role === "assistant" || m.role === "user")
+      .map((m) => m.content)
+      .join("\n\n");
+
+    const res = await fetch("http://127.0.0.1:8000/visualize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+
+    const { data } = await res.json();
+    console.log("📊 Chart data from API:", data);
+
+    if (data && Array.isArray(data) && data.length > 0) {
+      const chartMessage = {
+        role: "assistant",
+        type: "chart",
+        data,
+      };
+      setMessages((prev) => [...prev, chartMessage]);
+    } else {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "❌ Unable to extract insights. Try being more specific or numeric in your questions.",
+        },
+      ]);
+    }
   };
   
   const fetchFiles = async () => {
@@ -263,140 +276,37 @@ export default function ChatPage() {
     setLoading(false);
   };
 
+  const handleWebSearch = async () => {
+    if (!input.trim()) return;
+    setLoading(true);
+
+    try {
+      const res = await fetch("http://127.0.0.1:8000/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: input }),
+      });
+      const { results } = await res.json();
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: results, mode: "normal" },
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div
-      className="relative h-screen flex text-white font-sans"
-      style={{ backgroundColor: "#2c2c2c" }}
-    >
-      {/* Sidebar */}
+    <div className="relative h-screen flex text-white font-sans" style={{ backgroundColor: "#2c2c2c" }}>
       {sidebarOpen && (
-        <aside className="w-64 bg-black h-screen flex flex-col p-4 z-10">
-          {/* Header & Buttons */}
-          <div className="flex items-center justify-between mb-4">
-            <button onClick={() => setShowProfile(true)}>
-              <img src="/assets/profile_icon.png" alt="Profile" className="w-6 h-6" />
-            </button>
-            <button className="text-white text-2xl" onClick={() => setSidebarOpen(false)}>
-              <FiMenu />
-            </button>
-          </div>
-
-        <button className="flex items-center gap-3 mb-4 text-white" onClick={handleNewChat}>
-          <img src="/assets/new_chat_icon.png" alt="New Chat" className="w-5 h-5" />
-          <span>New Topic</span>
-        </button>
-
-      {/* Scrollable Section */}
-      <div className="flex-1 overflow-y-auto pr-1 mt-4 scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-transparent">
-        {/* Uploaded Files */}
-        <div>
-          <div
-            className="flex items-center gap-2 mb-2 cursor-pointer select-none"
-            onClick={() => setShowFiles((prev) => !prev)}
-          >
-            <img src="/assets/folder_icon.png" alt="Files" className="w-5 h-5" />
-            <span className="text-sm font-semibold">
-              Uploaded Documents {showFiles ? "▼" : "▶"}
-            </span>
-          </div>
-
-          {showFiles && (
-            <ul className="ml-2 space-y-2 text-sm text-white">
-              {files.map((file, i) => (
-                <li
-                  key={i}
-                  className="flex justify-between items-center bg-gray-800 p-2 rounded shadow text-white"
-                >
-                  <span
-                    className="truncate max-w-[160px] cursor-pointer hover:underline"
-                    onClick={() =>
-                      window.open(`http://localhost:8000/uploads/${encodeURIComponent(file.filename)}`, "_blank")
-                    }
-                  >
-                    {file.filename}
-                  </span>
-                  <button
-                    onClick={async () => {
-                      try {
-                        const response = await fetch(
-                          `http://localhost:8000/api/files/${encodeURIComponent(file.filename)}`,
-                          { method: "DELETE" }
-                        );
-                        if (!response.ok) {
-                          const error = await response.json();
-                          alert(`Failed to delete: ${error.detail || "Unknown error"}`);
-                        } else {
-                          fetchFiles();
-                        }
-                      } catch (err) {
-                        console.error("Delete failed:", err);
-                        alert("Failed to delete file. Please try again.");
-                      }
-                    }}
-                    className="text-red-400 hover:text-red-600 text-xs ml-2"
-                    title="Delete file"
-                  >
-                    🗑️
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        {/* Chat History */}
-        <div className="mt-6">
-          <span className="text-sm font-bold mb-2 block border-b border-gray-600 pb-1">📝 Chat History</span>
-          <div className="space-y-3 pb-6">
-            {chatHistory.map((chat) => (
-              <div
-                key={chat.id}
-                className="p-3 rounded-lg bg-[#1e1e1e] hover:bg-[#2c2c2c] shadow cursor-pointer transition duration-200"
-                onClick={() => {
-                  setMessages(chat.messages);
-                  setChatId(chat.id);
-                  setInput("");
-                }}
-              >
-                <div className="font-medium truncate text-sm mb-1">{chat.title || "Untitled Chat"}</div>
-                <div className="text-xs text-gray-400">
-                  {new Date(parseInt(chat.id)).toLocaleString()}
-                </div>
-              </div>
-            ))}
-
-            {chatHistory.length > 0 && (
-              <button
-                className="text-xs text-red-400 hover:text-red-600 mt-4 block"
-                onClick={async () => {
-                  localStorage.removeItem("chatHistory");
-                  setChatHistory([]);
-
-                  if (user?.uid) {
-                    const q = query(collection(db, "users", user.uid, "chats"));
-                    const snapshot = await getDocs(q);
-                    snapshot.forEach(async (docRef) => {
-                      await deleteDoc(docRef.ref);
-                    });
-                  }
-                }}
-              >
-                🗑️ Clear All Chats
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Logout */}
-      <button className="flex items-center gap-2 mt-4 text-sm text-red-500" onClick={handleLogout}>
-        <FiLogOut />
-        Logout
-      </button>
-    </aside>
+        <aside className="w-64 bg-black h-full flex flex-col p-4 z-10">
+          <button className="flex items-center gap-2 mt-6 text-sm text-red-500" onClick={handleLogout}>
+            <FiLogOut />
+            Logout
+          </button>
+        </aside>
       )}
 
-      {/* Main Chat Area */}
       <div className="flex-1 flex flex-col items-center justify-between relative w-full py-6">
         {!sidebarOpen && (
           <div className="absolute top-4 left-4 flex items-center gap-4 text-white text-2xl z-20">
@@ -404,87 +314,58 @@ export default function ChatPage() {
               <FiMenu />
             </button>
             <button onClick={handleNewChat}>
-              <img
-                src="/assets/new_chat_icon.png"
-                alt="New Chat"
-                className="w-6 h-6"
-              />
+              <img src="/assets/new_chat_icon.png" alt="New Chat" className="w-6 h-6" />
             </button>
           </div>
         )}
-        <img src="/assets/logo.png" alt="Logo" className="absolute top-4 right-4 w-12 h-auto" />
-        <div className="text-3xl font-semibold mb-8 text-center">Where should we begin?</div>
 
-        {/* Message History */}
-        <div className="flex flex-col space-y-4 w-full max-w-2xl px-4 overflow-y-auto mb-6 h-[60vh]">
-          {messages.map((msg, index) => (
+        <img src="/assets/logo.png" alt="Logo" className="absolute top-4 right-4 w-12 h-auto" />
+
+        <div className="flex-1 flex flex-col space-y-4 w-full max-w-2xl px-4 overflow-y-auto hide-scrollbar">
+          {messages.map((msg, idx) => (
             <div
-              key={index}
-              className={`p-3 rounded-lg max-w-[80%] whitespace-pre-wrap ${
-                msg.role === "user" ? "bg-blue-600 text-white self-end" : "bg-gray-300 text-black self-start"
+              key={idx}
+              className={`p-3 rounded-lg ${
+                msg.role === "user"
+                  ? "bg-[#722f37] text-white self-end"
+                  : "bg-gray-300 text-black self-start"
               }`}
+              style={{ maxWidth: msg.type === "chart" ? "100%" : "80%" }}
             >
-              <div
-                dangerouslySetInnerHTML={{
-                  __html: msg.content.replace(/\n/g, "<br>").replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>"),
-                }}
-              />
+              {msg.type === "chart" ? (
+                <div className="w-full max-w-xl bg-white rounded-xl shadow p-4">
+                  <InsightsChart data={msg.data} />
+                </div>
+              ) : (
+                <div
+                  dangerouslySetInnerHTML={{
+                    __html: (msg.content || "")
+                      .replace(/\n/g, "<br>")
+                      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>"),
+                  }}
+                />
+              )}
             </div>
           ))}
           {loading && <div className="text-white text-sm">Thinking...</div>}
         </div>
 
-        {/* Input Footer */}
-        <footer className="w-full max-w-2xl bg-[#9b9b9b] rounded-lg px-6 pt-6 pb-6 text-black shadow-md relative">
-          <div className="flex flex-col items-start gap-2 mb-3">
-            {uploadedFilesToSend.length > 0 && (
-              <div className="flex flex-wrap gap-2 ml-1">
-                {uploadedFilesToSend.map((file, idx) => (
-                  <div
-                    key={idx}
-                    className="bg-gray-800 text-white text-sm px-3 py-1 rounded-full shadow flex items-center gap-2"
-                  >
-                    <span className="truncate max-w-[140px]">📄 {file.name}</span>
-                    <button
-                      onClick={() =>
-                        setUploadedFilesToSend((prev) => prev.filter((_, i) => i !== idx))
-                      }
-                      className="text-gray-300 hover:text-red-400 text-xs"
-                      title="Remove file"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className="flex items-center gap-2 w-full">
-              <button onClick={handleUploadClick}>
-                <img src="/assets/plus_icon.png" alt="Add" className="w-5 h-5" />
-              </button>
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileChange}
-                multiple
-                style={{ display: "none" }}
-              />
-              <div className="flex-1">
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleSend()}
-                  placeholder="Let's chat..."
-                  className="w-full bg-transparent text-black placeholder-black text-lg outline-none"
-                />
-              </div>
-              <button onClick={handleSend} disabled={loading}>
-                <img src="/assets/send_icon.png" alt="Send" className="w-5 h-5" />
-              </button>
-            </div>
+        <footer className="w-full max-w-2xl bg-[#9b9b9b] rounded-lg px-6 py-6 text-black shadow-md mt-4">
+          <div className="flex items-center gap-2 mb-5">
+            <img src="/assets/plus_icon.png" alt="Add" className="w-5 h-5" />
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Let's chat..."
+              className="w-full bg-transparent text-black placeholder-black text-lg outline-none"
+              onKeyDown={(e) => e.key === "Enter" && handleSend()}
+            />
+            <button onClick={handleSend} disabled={loading}>
+              <img src="/assets/send_icon.png" alt="Send" className="w-5 h-5" />
+            </button>
           </div>
+
           <div className="flex justify-center gap-4 text-sm font-medium mb-4">
             {["normal", "cot", "react"].map((mode) => (
               <button
@@ -498,8 +379,9 @@ export default function ChatPage() {
               </button>
             ))}
           </div>
+
           <div className="flex justify-center gap-4 text-sm font-medium">
-          <button className="bg-white px-3 py-1 rounded shadow">
+            <button onClick={handleWebSearch} disabled={loading} className="bg-white px-3 py-1 rounded shadow">
               🔍 Web Search Results
             </button>
             <button
@@ -620,8 +502,7 @@ export default function ChatPage() {
             >
               📄 Summarized key points
             </button>
-
-            <button className="bg-white px-3 py-1 rounded shadow">
+            <button onClick={handleVisualize} className="bg-white px-3 py-1 rounded shadow">
               📊 Insights Visualized
             </button>
           </div>
@@ -629,31 +510,11 @@ export default function ChatPage() {
 
       </div>
 
-      {/* Profile Modal */}
       {showProfile && (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50">
-          <div className="bg-white text-black rounded-2xl p-6 w-96 shadow-lg relative text-center">
-            <button
-              onClick={() => setShowProfile(false)}
-              className="absolute top-3 right-4 text-xl text-gray-600 hover:text-black"
-            >
-              ×
-            </button>
-            <div className="flex flex-col items-center">
-              <img
-                src="/assets/profile_icon.png"
-                alt="Profile"
-                className="w-20 h-20 rounded-full mb-4 border-4 border-gray-300"
-              />
-              <h2 className="text-2xl font-bold mb-1">{user?.displayName || "Guest User"}</h2>
-              <p className="text-sm text-gray-600 mb-4">{user?.email || "Signed in as Guest"}</p>
-              <div className="w-full h-px bg-gray-200 my-4" />
-              <p className="text-sm text-gray-500">You are currently logged in to SynthesisTalk.</p>
-            </div>
-          </div>
+          {/* profile modal here */}
         </div>
       )}
     </div>
   );
 }
-

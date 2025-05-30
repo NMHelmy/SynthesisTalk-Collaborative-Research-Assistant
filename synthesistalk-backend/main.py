@@ -6,12 +6,11 @@ from collections import defaultdict
 from duckduckgo_search import DDGS
 from routers import files, upload, extract
 from dotenv import load_dotenv
-from datetime import datetime
-from typing import Dict
 import os
 import requests
 import re
-import json
+from datetime import datetime
+from typing import List, Dict
 
 # Load environment variables
 load_dotenv()
@@ -80,7 +79,6 @@ def get_system_prompt(mode: str) -> str:
 def search_web(query: str) -> str:
     with DDGS() as ddgs:
         results = ddgs.text(query, max_results=5)
-
     lines = []
     for r in results:
         title = r.get("title", "(no title)")
@@ -106,19 +104,28 @@ def call_llm(messages: list) -> str:
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"]
 
-# Chat endpoint
-@app.post("/api/chat")
+# Web search endpoint (for Web Search button)
+class SearchPayload(BaseModel):
+    query: str
+
+
+# Chat endpoint supporting Normal, CoT, and ReAct
+@app.post("/chat")
 async def chat(req: ChatRequest):
     sid = req.session_id
     mode = req.mode.lower()
     prompt = req.prompt.strip()
 
+    # Handle direct date queries without LLM
     if re.search(r"\b(?:date|today)\b", prompt.lower()):
         today = datetime.now().strftime("%B %d, %Y")
         reply = f"Today's date is {today}."
+        # Persist reply
         session_histories[sid].append({"role": "assistant", "content": reply})
         return {"response": reply}
 
+
+    # Retrieve persisted history (user & assistant only)
     history = session_histories[sid]
     system_msg = {"role": "system", "content": get_system_prompt(mode)}
     messages = [system_msg] + history + [{"role": "user", "content": prompt}]
@@ -139,7 +146,8 @@ async def chat(req: ChatRequest):
         else:
             reply = initial_response
 
-    elif mode == 'cot':
+    if mode == 'cot':
+        # Single pass CoT: show step-by-step reasoning then answer
         raw = call_llm(messages)
         if any(raw.lower().startswith(prefix) for prefix in ["let's think step by step", "let's break this down"]):
             reply = raw
@@ -160,13 +168,14 @@ async def search(payload: SearchPayload):
     result = search_web(payload.query)
     return {"results": result}
 
-# Visualization endpoint
-@app.post("/api/visualize")
+@app.post("/visualize")
 async def visualize(req: Dict):
+    import re
+
     text = req.get("text", "").strip()
     if not text:
         return {"data": []}
-
+    # Try to extract lines like "Country: Number unit"
     pattern = r"(\b[\w\s]+):\s*([\d.,]+)\s*(billion|million)?"
     matches = re.findall(pattern, text, flags=re.IGNORECASE)
 
@@ -183,5 +192,5 @@ async def visualize(req: Dict):
             insights.append({"label": name.strip(), "value": int(value)})
         except:
             continue
+    return {"data": insights[:5]}  # limit to 5 results
 
-    return {"data": insights[:5]}
