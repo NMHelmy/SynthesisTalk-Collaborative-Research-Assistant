@@ -3,6 +3,9 @@ import { FiMenu, FiLogOut } from "react-icons/fi";
 import { useNavigate } from "react-router-dom";
 import { auth } from "../firebase";
 import { uploadDocument, listFiles } from "../api/api";
+import { saveChatToFirestore, loadChatsFromFirestore } from "../chatStorage";
+import { db } from "../firebase";
+import { collection, query, getDocs, deleteDoc, addDoc, Timestamp } from "firebase/firestore";
 
 export default function ChatPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -17,6 +20,16 @@ export default function ChatPage() {
   const user = auth.currentUser;
   const [showFiles, setShowFiles] = useState(false);
   const [uploadedFilesToSend, setUploadedFilesToSend] = useState([]);
+  const [chatHistory, setChatHistory] = useState([]);
+  const [chatId, setChatId] = useState(() => Date.now().toString());
+
+  useEffect(() => {
+    const fetchChats = async () => {
+      const history = await loadChatsFromFirestore();
+      setChatHistory(history);
+    };
+    fetchChats();
+  }, []);
 
   useEffect(() => {
     fetchFiles();
@@ -39,6 +52,13 @@ export default function ChatPage() {
   const handleNewChat = () => {
     setMessages([]);
     setInput("");
+    setChatId(Date.now().toString());
+  };
+
+  const saveChatHistory = async (chatId, title, messages) => {
+    await saveChatToFirestore(chatId, title, messages);
+    const history = await loadChatsFromFirestore();
+    setChatHistory(history);
   };
 
   const handleSend = async () => {
@@ -59,6 +79,19 @@ export default function ChatPage() {
           method: "POST",
           body: formData,
         });
+        // Save metadata of uploaded files to Firestore
+        for (const file of uploadedFilesToSend) {
+          try {
+            await addDoc(collection(db, "documents"), {
+              filename: file.name,
+              uploadedBy: user?.uid || "anonymous",
+              uploadedAt: Timestamp.now(),
+              downloadUrl: `http://localhost:8000/uploads/${encodeURIComponent(file.name)}`
+            });
+          } catch (error) {
+            console.error("Failed to store file metadata:", error);
+          }
+        }
 
         console.log("Uploaded files:", uploadedFilesToSend.map(f => f.name));
 
@@ -70,7 +103,7 @@ export default function ChatPage() {
           const res = await fetch(`http://localhost:8000/api/extract/${filename}`);
           if (!res.ok) {
             const error = await res.json();
-            console.error("❌ Extraction error:", error);
+            console.error("Extraction error:", error);
             throw new Error(error.detail || "Extraction failed");
           }
           const data = await res.json();
@@ -93,9 +126,16 @@ export default function ChatPage() {
     }
 
     // Step 4: Show the user's message in chat
-    if (input.trim()) displayMessage += `\n${input.trim()}`;
+    if (input.trim()) {
+      if (uploadedFilesToSend.length > 0) {
+        displayMessage += `\n${input.trim()}`;
+      } else {
+        displayMessage += input.trim();
+      }
+    }
     const newUserMessage = { role: "user", content: displayMessage };
-    setMessages((prev) => [...prev, newUserMessage]);
+    const updatedMessages = [...messages, newUserMessage];
+    setMessages(updatedMessages);
 
     // Step 5: Send to LLM
     try {
@@ -109,7 +149,25 @@ export default function ChatPage() {
 
       if (data.response) {
         const assistantMessage = { role: "assistant", content: data.response };
-        setMessages((prev) => [...prev, assistantMessage]);
+        const finalMessages = [...updatedMessages, assistantMessage];
+        setMessages(finalMessages);
+
+        // Generate title based on first user message
+        let title = "New Chat";
+        const firstUserMessage = updatedMessages.find(m => m.role === "user");
+        if (firstUserMessage) {
+          const content = firstUserMessage.content.trim();
+          if (content.startsWith("📄")) {
+            const match = content.match(/^📄\s*(.+)/);
+            if (match) {
+              title = match[1].split("\n")[0].trim(); // Extract file name
+            }
+          } else {
+            title = content.slice(0, 40); // Text input fallback
+          }
+        }
+
+        saveChatHistory(chatId, title, finalMessages);
       } else {
         alert("Error: " + data.error);
       }
@@ -136,8 +194,9 @@ export default function ChatPage() {
     <div className="relative h-screen flex text-white font-sans" style={{ backgroundColor: "#2c2c2c" }}>
       {/* Sidebar */}
       {sidebarOpen && (
-        <aside className="w-64 bg-black h-full flex flex-col p-4 z-10">
-          <div className="flex items-center justify-between mb-6">
+        <aside className="w-64 bg-black h-screen flex flex-col p-4 z-10">
+          {/* Header & Buttons */}
+          <div className="flex items-center justify-between mb-4">
             <button onClick={() => setShowProfile(true)}>
               <img src="/assets/profile_icon.png" alt="Profile" className="w-6 h-6" />
             </button>
@@ -146,51 +205,52 @@ export default function ChatPage() {
             </button>
           </div>
 
-          <button className="flex items-center gap-3 mb-4 text-white" onClick={handleNewChat}>
-            <img src="/assets/new_chat_icon.png" alt="New Chat" className="w-5 h-5" />
-            <span>New Topic</span>
-          </button>
+        <button className="flex items-center gap-3 mb-4 text-white" onClick={handleNewChat}>
+          <img src="/assets/new_chat_icon.png" alt="New Chat" className="w-5 h-5" />
+          <span>New Topic</span>
+        </button>
 
-          <div className="text-white mb-4">
-            <div
-              className="flex items-center gap-2 mb-2 cursor-pointer select-none"
-              onClick={() => setShowFiles((prev) => !prev)}
-            >
-              <img src="/assets/folder_icon.png" alt="Files" className="w-5 h-5" />
-              <span className="text-sm font-semibold">
-                Uploaded Documents {showFiles ? "▼" : "▶"}
-              </span>
-            </div>
+      {/* Scrollable Section */}
+      <div className="flex-1 overflow-y-auto pr-1 mt-4 scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-transparent">
+        {/* Uploaded Files */}
+        <div>
+          <div
+            className="flex items-center gap-2 mb-2 cursor-pointer select-none"
+            onClick={() => setShowFiles((prev) => !prev)}
+          >
+            <img src="/assets/folder_icon.png" alt="Files" className="w-5 h-5" />
+            <span className="text-sm font-semibold">
+              Uploaded Documents {showFiles ? "▼" : "▶"}
+            </span>
+          </div>
 
-            {showFiles && (
-              <ul className="ml-2 space-y-2 text-sm text-white">
-                {files.map((file, i) => (
-                  <li
-                    key={i}
-                    className="flex justify-between items-center bg-gray-800 p-2 rounded shadow text-white"
+          {showFiles && (
+            <ul className="ml-2 space-y-2 text-sm text-white">
+              {files.map((file, i) => (
+                <li
+                  key={i}
+                  className="flex justify-between items-center bg-gray-800 p-2 rounded shadow text-white"
+                >
+                  <span
+                    className="truncate max-w-[160px] cursor-pointer hover:underline"
+                    onClick={() =>
+                      window.open(`http://localhost:8000/uploads/${encodeURIComponent(file.filename)}`, "_blank")
+                    }
                   >
-                    <span
-                      className="truncate max-w-[160px] cursor-pointer hover:underline"
-                      onClick={() =>
-                        window.open(`http://localhost:8000/uploads/${encodeURIComponent(file.filename)}`, "_blank")
-                      }
-                    >
-                      {file.filename}
-                    </span>
-                    <button
+                    {file.filename}
+                  </span>
+                  <button
                     onClick={async () => {
                       try {
                         const response = await fetch(
                           `http://localhost:8000/api/files/${encodeURIComponent(file.filename)}`,
-                          {
-                            method: "DELETE",
-                          }
+                          { method: "DELETE" }
                         );
                         if (!response.ok) {
                           const error = await response.json();
                           alert(`Failed to delete: ${error.detail || "Unknown error"}`);
                         } else {
-                          fetchFiles(); // refresh file list
+                          fetchFiles();
                         }
                       } catch (err) {
                         console.error("Delete failed:", err);
@@ -202,17 +262,63 @@ export default function ChatPage() {
                   >
                     🗑️
                   </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
 
-                  </li>
-                ))}
-              </ul>
+        {/* Chat History */}
+        <div className="mt-6">
+          <span className="text-sm font-bold mb-2 block border-b border-gray-600 pb-1">📝 Chat History</span>
+          <div className="space-y-3 pb-6">
+            {chatHistory.map((chat) => (
+              <div
+                key={chat.id}
+                className="p-3 rounded-lg bg-[#1e1e1e] hover:bg-[#2c2c2c] shadow cursor-pointer transition duration-200"
+                onClick={() => {
+                  setMessages(chat.messages);
+                  setChatId(chat.id);
+                  setInput("");
+                }}
+              >
+                <div className="font-medium truncate text-sm mb-1">{chat.title || "Untitled Chat"}</div>
+                <div className="text-xs text-gray-400">
+                  {new Date(parseInt(chat.id)).toLocaleString()}
+                </div>
+              </div>
+            ))}
+
+            {chatHistory.length > 0 && (
+              <button
+                className="text-xs text-red-400 hover:text-red-600 mt-4 block"
+                onClick={async () => {
+                  localStorage.removeItem("chatHistory");
+                  setChatHistory([]);
+
+                  if (user?.uid) {
+                    const q = query(collection(db, "users", user.uid, "chats"));
+                    const snapshot = await getDocs(q);
+                    snapshot.forEach(async (docRef) => {
+                      await deleteDoc(docRef.ref);
+                    });
+                  }
+                }}
+              >
+                🗑️ Clear All Chats
+              </button>
             )}
           </div>
-          <button className="flex items-center gap-2 mt-6 text-sm text-red-500" onClick={handleLogout}>
-            <FiLogOut />
-            Logout
-          </button>
-        </aside>
+        </div>
+      </div>
+
+      {/* Logout */}
+      <button className="flex items-center gap-2 mt-4 text-sm text-red-500" onClick={handleLogout}>
+        <FiLogOut />
+        Logout
+      </button>
+    </aside>
+
       )}
 
       {/* Main Chat Area */}
