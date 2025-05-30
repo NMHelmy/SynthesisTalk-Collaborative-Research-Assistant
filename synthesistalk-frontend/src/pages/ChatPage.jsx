@@ -15,6 +15,7 @@ export default function ChatPage() {
   const fileInputRef = useRef(null);
   const navigate = useNavigate();
   const user = auth.currentUser;
+  const [showFiles, setShowFiles] = useState(true);
 
   useEffect(() => {
     fetchFiles();
@@ -109,17 +110,31 @@ export default function ChatPage() {
           </button>
 
           <div className="text-white mb-4">
-            <div className="flex items-center gap-2 mb-2">
+            <div
+              className="flex items-center gap-2 mb-2 cursor-pointer select-none"
+              onClick={() => setShowFiles((prev) => !prev)}
+            >
               <img src="/assets/folder_icon.png" alt="Files" className="w-5 h-5" />
-              <span className="text-sm font-semibold">Uploaded Documents</span>
+              <span className="text-sm font-semibold">
+                Uploaded Documents {showFiles ? "▼" : "▶"}
+              </span>
             </div>
-            <ul className="ml-2 space-y-2 text-sm text-white">
-              {files.map((file, i) => (
-                <li key={i} className="bg-gray-800 p-2 rounded shadow text-white break-all">
-                  {file.filename}
-                </li>
-              ))}
-            </ul>
+
+            {showFiles && (
+              <ul className="ml-2 space-y-2 text-sm text-white">
+                {files.map((file, i) => (
+                  <li
+                    key={i}
+                    className="bg-gray-800 p-2 rounded shadow text-white break-all cursor-pointer hover:bg-gray-700"
+                    onClick={() =>
+                      window.open(`http://localhost:8000/uploads/${encodeURIComponent(file.filename)}`, "_blank")
+                    }
+                  >
+                    {file.filename}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
 
           <button className="flex items-center gap-2 mt-6 text-sm text-red-500" onClick={handleLogout}>
