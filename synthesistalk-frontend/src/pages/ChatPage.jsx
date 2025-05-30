@@ -1,4 +1,4 @@
-// src/pages/ChatPage.jsx
+
 
 import React, { useState, useEffect } from "react";
 import { FiMenu, FiLogOut } from "react-icons/fi";
@@ -198,3 +198,4 @@ export default function ChatPage() {
     </div>
   );
 }
+
