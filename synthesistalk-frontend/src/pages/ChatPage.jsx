@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { FiMenu, FiLogOut } from "react-icons/fi";
 import { useNavigate } from "react-router-dom";
 import { auth } from "../firebase";
-import { uploadDocument, listFiles, deleteFile } from "../api/api";
+import { uploadDocument, listFiles } from "../api/api";
 
 export default function ChatPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -10,7 +10,7 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [reasoningMode, setReasoningMode] = useState("normal"); // "normal", "cot", "react"
+  const [reasoningMode, setReasoningMode] = useState("normal");
   const [files, setFiles] = useState([]);
   const fileInputRef = useRef(null);
   const navigate = useNavigate();
@@ -80,17 +80,12 @@ export default function ChatPage() {
     try {
       await uploadDocument(file);
       fetchFiles();
+      setMessages((prev) => [
+        ...prev,
+        { role: "user", content: `📄 Uploaded: ${file.name}` },
+      ]);
     } catch (err) {
       console.error("Upload failed", err);
-    }
-  };
-
-  const handleDelete = async (filename) => {
-    try {
-      await deleteFile(filename);
-      fetchFiles();
-    } catch (err) {
-      console.error("Delete failed", err);
     }
   };
 
@@ -113,45 +108,21 @@ export default function ChatPage() {
             <span>New Topic</span>
           </button>
 
-          <div className="flex flex-col gap-2 text-white mb-4">
-            <div className="flex items-center gap-3">
+          <div className="text-white mb-4">
+            <div className="flex items-center gap-2 mb-2">
               <img src="/assets/folder_icon.png" alt="Files" className="w-5 h-5" />
-              <span>Uploaded Files</span>
+              <span className="text-sm font-semibold">Uploaded Documents</span>
             </div>
-            <ul className="ml-8 list-disc text-sm text-gray-300">
+            <ul className="ml-2 space-y-2 text-sm text-white">
               {files.map((file, i) => (
-                <li key={i} className="flex items-center gap-2">
-                  <a
-                    href={`http://localhost:8000/uploads/${encodeURIComponent(file.filename)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-400 hover:underline"
-                  >
-                    {file.filename}
-                  </a>
-                  <button
-                    onClick={async () => {
-                      try {
-                        const res = await fetch(`http://localhost:8000/extract/${encodeURIComponent(file.filename)}`);
-                        const data = await res.json();
-                        alert(data.text);
-                      } catch (err) {
-                        alert("Failed to extract text");
-                      }
-                    }}
-                    className="text-purple-400 hover:text-purple-600 text-xs"
-                  >
-                    Extract
-                  </button>
+                <li key={i} className="bg-gray-800 p-2 rounded shadow text-white break-all">
+                  {file.filename}
                 </li>
               ))}
             </ul>
           </div>
 
-          <button
-            className="flex items-center gap-2 mt-6 text-sm text-red-500"
-            onClick={handleLogout}
-          >
+          <button className="flex items-center gap-2 mt-6 text-sm text-red-500" onClick={handleLogout}>
             <FiLogOut />
             Logout
           </button>
@@ -160,7 +131,6 @@ export default function ChatPage() {
 
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col items-center justify-between relative w-full py-6">
-        {/* Top controls */}
         {!sidebarOpen && (
           <div className="absolute top-4 left-4 flex items-center gap-4 text-white text-2xl z-20">
             <button onClick={() => setSidebarOpen(true)}>
@@ -175,20 +145,18 @@ export default function ChatPage() {
         <img src="/assets/logo.png" alt="Logo" className="absolute top-4 right-4 w-12 h-auto" />
         <div className="text-3xl font-semibold mb-8 text-center">Where should we begin?</div>
 
-        {/* Chat History */}
+        {/* Message History */}
         <div className="flex flex-col space-y-4 w-full max-w-2xl px-4 overflow-y-auto mb-6 h-[60vh]">
           {messages.map((msg, index) => (
             <div
               key={index}
               className={`p-3 rounded-lg max-w-[80%] whitespace-pre-wrap ${
-                msg.role === "user"
-                  ? "bg-blue-600 text-white self-end"
-                  : "bg-gray-300 text-black self-start"
+                msg.role === "user" ? "bg-blue-600 text-white self-end" : "bg-gray-300 text-black self-start"
               }`}
             >
               <div
                 dangerouslySetInnerHTML={{
-                  __html: msg.content.replace(/\n/g, "<br>").replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+                  __html: msg.content.replace(/\n/g, "<br>").replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>"),
                 }}
               />
             </div>
@@ -202,16 +170,14 @@ export default function ChatPage() {
             <button onClick={handleUploadClick}>
               <img src="/assets/plus_icon.png" alt="Add" className="w-5 h-5" />
             </button>
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileChange}
-              style={{ display: "none" }}
-            />
+            <input type="file" ref={fileInputRef} onChange={handleFileChange} style={{ display: "none" }} />
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSend();
+              }}
               placeholder="Let's chat..."
               className="w-full bg-transparent text-black placeholder-black text-lg outline-none"
             />
@@ -221,32 +187,18 @@ export default function ChatPage() {
           </div>
 
           <div className="flex justify-center gap-4 text-sm font-medium mb-4">
-            <button
-              className={`px-3 py-1 rounded shadow ${
-                reasoningMode === "normal" ? "bg-blue-500 text-white" : "bg-white"
-              }`}
-              onClick={() => setReasoningMode("normal")}
-            >
-              💬 Normal
-            </button>
-            <button
-              className={`px-3 py-1 rounded shadow ${
-                reasoningMode === "cot" ? "bg-blue-500 text-white" : "bg-white"
-              }`}
-              onClick={() => setReasoningMode("cot")}
-            >
-              🔗 CoT
-            </button>
-            <button
-              className={`px-3 py-1 rounded shadow ${
-                reasoningMode === "react" ? "bg-blue-500 text-white" : "bg-white"
-              }`}
-              onClick={() => setReasoningMode("react")}
-            >
-              🤖 ReAct
-            </button>
+            {["normal", "cot", "react"].map((mode) => (
+              <button
+                key={mode}
+                className={`px-3 py-1 rounded shadow ${
+                  reasoningMode === mode ? "bg-blue-500 text-white" : "bg-white"
+                }`}
+                onClick={() => setReasoningMode(mode)}
+              >
+                {mode === "normal" ? "💬 Normal" : mode === "cot" ? "🔗 CoT" : "🤖 ReAct"}
+              </button>
+            ))}
           </div>
-
           <div className="flex justify-center gap-4 text-sm font-medium">
             <button className="bg-white px-3 py-1 rounded shadow">🔍 Web Search Results</button>
             <button className="bg-white px-3 py-1 rounded shadow">📄 Summarized key points</button>
@@ -265,7 +217,6 @@ export default function ChatPage() {
             >
               ×
             </button>
-
             <div className="flex flex-col items-center">
               <img
                 src="/assets/profile_icon.png"
@@ -275,9 +226,7 @@ export default function ChatPage() {
               <h2 className="text-2xl font-bold mb-1">{user?.displayName || "Guest User"}</h2>
               <p className="text-sm text-gray-600 mb-4">{user?.email || "Signed in as Guest"}</p>
               <div className="w-full h-px bg-gray-200 my-4" />
-              <p className="text-sm text-gray-500">
-                You are currently logged in to SynthesisTalk.
-              </p>
+              <p className="text-sm text-gray-500">You are currently logged in to SynthesisTalk.</p>
             </div>
           </div>
         </div>
