@@ -1,10 +1,9 @@
-import React, { useState, useRef, useEffect } from "react";
 import { FiMenu, FiLogOut } from "react-icons/fi";
 import { useNavigate } from "react-router-dom";
-import { auth } from "../firebase";
+import { auth, db } from "../firebase";
+import React, { useState, useRef, useEffect } from "react";
 import { uploadDocument, listFiles } from "../api/api";
 import { saveChatToFirestore, loadChatsFromFirestore } from "../chatStorage";
-import { db } from "../firebase";
 import { collection, query, getDocs, deleteDoc, addDoc, Timestamp } from "firebase/firestore";
 
 export default function ChatPage() {
@@ -13,6 +12,7 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [sessionId, setSessionId] = useState(null);
   const [reasoningMode, setReasoningMode] = useState("normal");
   const [files, setFiles] = useState([]);
   const fileInputRef = useRef(null);
@@ -31,18 +31,15 @@ export default function ChatPage() {
     fetchChats();
   }, []);
 
+  // Generate or load a persistent sessionId
   useEffect(() => {
-    fetchFiles();
-  }, []);
-
-  const fetchFiles = async () => {
-    try {
-      const data = await listFiles();
-      setFiles(data.files || []);
-    } catch (error) {
-      console.error("Failed to fetch files", error);
+    let id = localStorage.getItem("sessionId");
+    if (!id) {
+      id = crypto.randomUUID();
+      localStorage.setItem("sessionId", id);
     }
-  };
+    setSessionId(id);
+  }, []);
 
   const handleLogout = async () => {
     await auth.signOut();
@@ -249,10 +246,16 @@ export default function ChatPage() {
       setUploadedFilesToSend((prev) => [...prev, ...selected]);
       e.target.value = ""; 
     }
+
+    setInput("");
+    setLoading(false);
   };
 
   return (
-    <div className="relative h-screen flex text-white font-sans" style={{ backgroundColor: "#2c2c2c" }}>
+    <div
+      className="relative h-screen flex text-white font-sans"
+      style={{ backgroundColor: "#2c2c2c" }}
+    >
       {/* Sidebar */}
       {sidebarOpen && (
         <aside className="w-64 bg-black h-screen flex flex-col p-4 z-10">
@@ -379,7 +382,6 @@ export default function ChatPage() {
         Logout
       </button>
     </aside>
-
       )}
 
       {/* Main Chat Area */}
@@ -390,11 +392,14 @@ export default function ChatPage() {
               <FiMenu />
             </button>
             <button onClick={handleNewChat}>
-              <img src="/assets/new_chat_icon.png" alt="New Chat" className="w-6 h-6" />
+              <img
+                src="/assets/new_chat_icon.png"
+                alt="New Chat"
+                className="w-6 h-6"
+              />
             </button>
           </div>
         )}
-
         <img src="/assets/logo.png" alt="Logo" className="absolute top-4 right-4 w-12 h-auto" />
         <div className="text-3xl font-semibold mb-8 text-center">Where should we begin?</div>
 
@@ -468,7 +473,6 @@ export default function ChatPage() {
               </button>
             </div>
           </div>
-
           <div className="flex justify-center gap-4 text-sm font-medium mb-4">
             {["normal", "cot", "react"].map((mode) => (
               <button
@@ -483,6 +487,9 @@ export default function ChatPage() {
             ))}
           </div>
           <div className="flex justify-center gap-4 text-sm font-medium">
+          <button className="bg-white px-3 py-1 rounded shadow">
+              🔍 Web Search Results
+            </button>
             <button
               className="bg-white px-3 py-1 rounded shadow"
               onClick={async () => {
@@ -714,7 +721,6 @@ export default function ChatPage() {
             >
               📊 Insights Visualized
             </button>
-
           </div>
         </footer>
 
@@ -747,3 +753,4 @@ export default function ChatPage() {
     </div>
   );
 }
+

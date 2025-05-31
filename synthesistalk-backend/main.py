@@ -3,15 +3,18 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi import UploadFile, File
 from routers import files, upload, extract
 from dotenv import load_dotenv
+from collections import defaultdict
+from pydantic import BaseModel
+from duckduckgo_search import DDGS
 import os
 import requests
-from duckduckgo_search import DDGS  # required for run_search
+import re
 
 # Load environment variables
 load_dotenv()
-
 API_KEY = os.getenv("NGU_API_KEY")
 BASE_URL = os.getenv("NGU_BASE_URL")
 MODEL = os.getenv("NGU_MODEL")
@@ -23,10 +26,10 @@ headers = {
 
 app = FastAPI()
 
-# Enable CORS for both frontend communication and LLM integration
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "*"],  # "*" should be replaced in production
+    allow_origins=["http://localhost:3000", "*"],  # Replace "*" with frontend origin in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -44,84 +47,94 @@ app.include_router(extract.router, prefix="/api")
 def root():
     return {"status": "SynthesisTalk Backend Running"}
 
-@app.post("/api/chat")
-async def chat(request: Request):
-    data = await request.json()
-    prompt = data.get("prompt")
-    mode = data.get("mode", "normal")
+# In-memory session history
+session_histories = defaultdict(list)
 
-    if not prompt:
-        return {"error": "Prompt is required"}
+# Request schema for chat
+class ChatRequest(BaseModel):
+    session_id: str
+    prompt:     str
+    mode:       str = "normal"  # normal, cot, react
 
-    # Default system message
-    system_prompt = "You are a helpful assistant."
-
-    # Chain-of-Thought Mode
-    if mode == "cot":
-        system_prompt = "You are a thoughtful assistant. Explain your answer step by step."
-        prompt = f"Let's think step by step: {prompt}"
-
-    # ReAct Mode
-    elif mode == "react":
-        system_prompt = (
-            "You are an agent that reasons and uses tools.\n"
+# Mode-specific system prompts
+def get_system_prompt(mode: str) -> str:
+    if mode == 'normal':
+        return "You are a helpful assistant. Provide concise, direct answers without revealing your reasoning."
+    elif mode == 'cot':
+        return "You are a thoughtful assistant. Let's think step by step and show your reasoning."
+    elif mode == 'react':
+        return (
+            "You are an AI agent that thinks step by step and acts when needed.\n"
             "Use this format:\n"
-            "Thought: ...\n"
-            "Action: ...\n"
-            "Observation: ...\n"
-            "Final Answer: ..."
+            "Thought: [reasoning]\n"
+            "Action: [tool][query]\n"
+            "When you receive an observation, continue with:\n"
+            "Observation: [result]\n"
+            "Thought: [interpret the observation]\n"
+            "Answer: [final answer]"
         )
+    return "You are a helpful assistant."
 
-    # Build initial payload
-    payload = {
-        "model": MODEL,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
-        ]
-    }
-
-    try:
-        response = requests.post(f"{BASE_URL}/chat/completions", json=payload, headers=headers)
-        response.raise_for_status()
-        reply = response.json()["choices"][0]["message"]["content"]
-
-        # ReAct follow-up logic
-        if mode == "react" and "Action:" in reply:
-            lines = reply.splitlines()
-            action_line = next((line for line in lines if line.startswith("Action:")), None)
-
-            if action_line and "Search[" in action_line:
-                search_term = action_line.split("Search[")[-1].rstrip("] ")
-                observation = run_search(search_term)
-
-                # Continue reasoning after observation
-                react_prompt = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                    {"role": "assistant", "content": reply},
-                    {"role": "user", "content": f"Observation: {observation}\nFinal Answer:"}
-                ]
-
-                followup = {
-                    "model": MODEL,
-                    "messages": react_prompt
-                }
-
-                final = requests.post(f"{BASE_URL}/chat/completions", json=followup, headers=headers)
-                final.raise_for_status()
-                final_reply = final.json()["choices"][0]["message"]["content"]
-
-                return {"response": f"{reply}\n\n{final_reply}"}
-
-        return {"response": reply}
-
-    except Exception as e:
-        return {"error": str(e)}
-
+# DuckDuckGo search tool
 def run_search(query: str) -> str:
     with DDGS() as ddgs:
-        results = ddgs.text(query)
+        results = ddgs.text(query, max_results=5)
         for r in results:
             return r["body"]
     return "No results found."
+
+# Core LLM call wrapper
+def call_llm(messages: list) -> str:
+    payload = {
+        "model": MODEL,
+        "messages": messages,
+        "temperature": 0.7,
+        "top_p": 0.9
+    }
+    resp = requests.post(f"{BASE_URL}/chat/completions", json=payload, headers=headers)
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"]
+
+# Final POST chat endpoint
+@app.post("/api/chat")
+async def chat(req: ChatRequest):
+    sid = req.session_id
+    mode = req.mode.lower()
+    prompt = req.prompt.strip()
+
+    history = session_histories[sid]
+    system_msg = {"role": "system", "content": get_system_prompt(mode)}
+    messages = [system_msg] + history + [{"role": "user", "content": prompt}]
+
+    if mode == 'react':
+        initial_response = call_llm(messages)
+        action_match = re.search(r"Action:\s*(\w+)\[(.*?)\]", initial_response)
+
+        if action_match and action_match.group(1).lower() == 'search':
+            query = action_match.group(2).strip()
+            observation = run_search(query)
+
+            messages += [
+                {"role": "assistant", "content": initial_response},
+                {"role": "system", "content": f"Observation: {observation}"}
+            ]
+            followup_response = call_llm(messages)
+
+            reply = f"{initial_response}\n\nObservation: {observation}\n\n{followup_response}"
+        else:
+            reply = initial_response
+
+    elif mode == 'cot':
+        raw = call_llm(messages)
+        if any(raw.lower().startswith(prefix) for prefix in ["let's think step by step", "let's break this down"]):
+            reply = raw
+        else:
+            reply = f"Let's think step by step:\n{raw}"
+
+    else:
+        reply = call_llm(messages)
+
+    history.append({"role": "user", "content": prompt})
+    history.append({"role": "assistant", "content": reply})
+
+    return {"response": reply}
