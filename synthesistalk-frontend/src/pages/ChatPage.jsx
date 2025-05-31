@@ -328,23 +328,37 @@ export default function ChatPage() {
     setInput("");
     setLoading(false);
   };
-
   const handleWebSearch = async () => {
-    if (!input.trim()) return;
+    if (!input.trim() && messages.length === 0) {
+      alert("Please type a query or start a conversation first.");
+      return;
+    }
+
     setLoading(true);
 
+    // 1) Insert the user's actual question
+    const questionMessage = { role: "user", content: input.trim() };
+    // 2) Immediately follow with a "Web Search Results" marker
+    const markerMessage  = { role: "user", content: "Web Search Results" };
+    setMessages((prev) => [...prev, questionMessage, markerMessage]);
+
     try {
-      const res = await fetch("http://127.0.0.1:8000/search", {
+      const queryText = input.trim() || "";
+      const res = await fetch("http://127.0.0.1:8000/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: input }),
+        body: JSON.stringify({ query: queryText }),
       });
       const { results } = await res.json();
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: results, mode: "normal" },
-      ]);
+
+      // 1c. Append an “assistant” message with the snippets
+      const assistantMessage = { role: "assistant", content: results };
+      setMessages((prev) => [...prev, assistantMessage]);
+    } catch (err) {
+      console.error("Search error:", err);
+      alert("Web search failed.");
     } finally {
+      setInput("");
       setLoading(false);
     }
   };
