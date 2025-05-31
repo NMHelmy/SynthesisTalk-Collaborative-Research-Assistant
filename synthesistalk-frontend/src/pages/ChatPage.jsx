@@ -5,6 +5,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { uploadDocument, listFiles } from "../api/api";
 import { saveChatToFirestore, loadChatsFromFirestore } from "../chatStorage";
 import { collection, query, getDocs, deleteDoc, addDoc, Timestamp } from "firebase/firestore";
+import InsightsChart from "../components/InsightsChart";
 
 export default function ChatPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -616,120 +617,11 @@ export default function ChatPage() {
 
                 setLoading(false);
               }}
-
-
             >
               📄 Summarized key points
             </button>
 
-            <button
-              className="bg-white px-3 py-1 rounded shadow"
-              onClick={async () => {
-                setInput("Insights Visualized");
-
-                if (!messages.length) {
-                  if (uploadedFilesToSend.length > 0) {
-                    const fileMessages = [];
-                    let combinedText = "";
-
-                    for (const file of uploadedFilesToSend) {
-                      const fileName = file?.name;
-                      if (!fileName) continue;
-
-                      const formData = new FormData();
-                      formData.append("files", file);
-
-                      await fetch("http://localhost:8000/api/upload", {
-                        method: "POST",
-                        body: formData,
-                      });
-
-                      const extractRes = await fetch(`http://localhost:8000/api/extract/${encodeURIComponent(fileName)}`);
-                      const extractData = await extractRes.json();
-
-                      if (!extractData.text) {
-                        alert(`Failed to extract text from ${fileName}`);
-                        return;
-                      }
-
-                      combinedText += `From ${fileName}:\n${extractData.text}\n\n`;
-                      fileMessages.push({ role: "user", content: `📄 ${fileName}` });
-                    }
-
-                    setMessages((prev) => [...prev, ...fileMessages, { role: "user", content: "Insights Visualized" }, { role: "assistant", content: "Thinking..." }]);
-                    setUploadedFilesToSend([]);
-
-                    try {
-                      const res = await fetch("http://localhost:8000/api/chat", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          prompt: `Please visualize or describe any key patterns, comparisons, or insights from the following content:\n\n${combinedText}`,
-                          mode: reasoningMode,
-                        }),
-                      });
-
-                      const data = await res.json();
-                      if (data.response) {
-                        const updated = [
-                          ...fileMessages,
-                          { role: "user", content: "Insights Visualized" },
-                          { role: "assistant", content: data.response }
-                        ];
-                        setMessages((prev) => [...prev.slice(0, -1), updated[updated.length - 1]]);
-                        saveChatHistory(chatId, "Insights Visualized", [...messages, ...updated]);
-                      } else {
-                        alert("Insight visualization failed: " + data.error);
-                      }
-                    } catch (err) {
-                      alert("Failed to generate insights.");
-                    }
-
-                  } else {
-                    return alert("Please upload a document or start a conversation first.");
-                  }
-                } else {
-                  {messages.map((msg, i) => (
-                    <div key={i}>
-                      {msg.content === "Thinking..." ? (
-                        <p className="italic text-gray-500 text-sm px-4 py-1">Thinking...</p>
-                      ) : (
-                        <div className={`message ${msg.role}`}>
-                          {msg.content}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-
-                  const latestContext = messages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
-
-                  try {
-                    const res = await fetch("http://localhost:8000/api/chat", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        prompt: `Please visualize or explain any insights from the following conversation:\n\n${latestContext}`,
-                        mode: reasoningMode
-                      }),
-                    });
-
-                    const data = await res.json();
-                    if (data.response) {
-                      const updated = [
-                        { role: "user", content: "Insights Visualized" },
-                        { role: "assistant", content: data.response }
-                      ];
-                      setMessages((prev) => [...prev.slice(0, -1), updated[1]]);
-                      saveChatHistory(chatId, "Insights Visualized", [...messages, ...updated]);
-                    } else {
-                      alert("Insight generation failed: " + data.error);
-                    }
-                  } catch (err) {
-                    alert("Failed to generate insights.");
-                  }
-                }
-              }}
-            >
+            <button className="bg-white px-3 py-1 rounded shadow">
               📊 Insights Visualized
             </button>
           </div>

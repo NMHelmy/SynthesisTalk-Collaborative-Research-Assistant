@@ -1,40 +1,37 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi import UploadFile, File
+from pydantic import BaseModel
+from collections import defaultdict
+from duckduckgo_search import DDGS
 from routers import files, upload, extract
 from dotenv import load_dotenv
-from collections import defaultdict
-from pydantic import BaseModel
-from duckduckgo_search import DDGS
+from datetime import datetime
+from typing import Dict
 import os
 import requests
 import re
+import json
 
 # Load environment variables
 load_dotenv()
-
 API_KEY = os.getenv("NGU_API_KEY")
 BASE_URL = os.getenv("NGU_BASE_URL")
 MODEL = os.getenv("NGU_MODEL")
 
-headers = {
-    "Authorization": f"Bearer {API_KEY}",
-    "Content-Type": "application/json"
-}
-
+# Initialize FastAPI app
 app = FastAPI()
 
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "*"],  # Replace "*" with frontend origin in production
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Mount uploaded files statically
+# Mount static files for uploaded content
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # Register routers
@@ -46,16 +43,20 @@ app.include_router(extract.router, prefix="/api")
 def root():
     return {"status": "SynthesisTalk Backend Running"}
 
-# In-memory session history
+# Session-based memory for chat
 session_histories = defaultdict(list)
 
-# Request schema for chat
+# Input schema
 class ChatRequest(BaseModel):
     session_id: str
     prompt: str
     mode: str = "normal"  # normal, cot, react
 
-# Mode-specific system prompts
+class SearchPayload(BaseModel):
+    query: str
+
+# System prompt logic
+
 def get_system_prompt(mode: str) -> str:
     if mode == 'normal':
         return "You are a helpful assistant. Provide concise, direct answers without revealing your reasoning."
@@ -63,7 +64,7 @@ def get_system_prompt(mode: str) -> str:
         return "You are a thoughtful assistant. Let's think step by step and show your reasoning."
     elif mode == 'react':
         return (
-            "You are an AI agent that thinks step by step and acts when needed.\n"
+            "You are an AI agent that thinks and acts when needed.\n"
             "Use this format:\n"
             "Thought: [reasoning]\n"
             "Action: [tool][query]\n"
@@ -74,15 +75,23 @@ def get_system_prompt(mode: str) -> str:
         )
     return "You are a helpful assistant."
 
-# DuckDuckGo search tool
-def run_search(query: str) -> str:
+# Web search helper
+
+def search_web(query: str) -> str:
     with DDGS() as ddgs:
         results = ddgs.text(query, max_results=5)
-        for r in results:
-            return r["body"]
-    return "No results found."
 
-# Core LLM call wrapper
+    lines = []
+    for r in results:
+        title = r.get("title", "(no title)")
+        body = r.get("body", "").strip()
+        href = r.get("href", "")
+        lines.append(f"- <a href='{href}' target='_blank'><strong>{title}</strong></a><br>{body}")
+
+    return "<br><br>".join(lines) or "No results found."
+
+# Call NGU LLM
+
 def call_llm(messages: list) -> str:
     payload = {
         "model": MODEL,
@@ -90,16 +99,25 @@ def call_llm(messages: list) -> str:
         "temperature": 0.7,
         "top_p": 0.9
     }
-    resp = requests.post(f"{BASE_URL}/chat/completions", json=payload, headers=headers)
+    resp = requests.post(f"{BASE_URL}/chat/completions", json=payload, headers={
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json"
+    })
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"]
 
-# Final POST chat endpoint
+# Chat endpoint
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
     sid = req.session_id
     mode = req.mode.lower()
     prompt = req.prompt.strip()
+
+    if re.search(r"\b(?:date|today)\b", prompt.lower()):
+        today = datetime.now().strftime("%B %d, %Y")
+        reply = f"Today's date is {today}."
+        session_histories[sid].append({"role": "assistant", "content": reply})
+        return {"response": reply}
 
     history = session_histories[sid]
     system_msg = {"role": "system", "content": get_system_prompt(mode)}
@@ -111,14 +129,12 @@ async def chat(req: ChatRequest):
 
         if action_match and action_match.group(1).lower() == 'search':
             query = action_match.group(2).strip()
-            observation = run_search(query)
-
+            observation = search_web(query)
             messages += [
                 {"role": "assistant", "content": initial_response},
                 {"role": "system", "content": f"Observation: {observation}"}
             ]
             followup_response = call_llm(messages)
-
             reply = f"{initial_response}\n\nObservation: {observation}\n\n{followup_response}"
         else:
             reply = initial_response
@@ -137,3 +153,35 @@ async def chat(req: ChatRequest):
     history.append({"role": "assistant", "content": reply})
 
     return {"response": reply}
+
+# Search endpoint
+@app.post("/api/search")
+async def search(payload: SearchPayload):
+    result = search_web(payload.query)
+    return {"results": result}
+
+# Visualization endpoint
+@app.post("/api/visualize")
+async def visualize(req: Dict):
+    text = req.get("text", "").strip()
+    if not text:
+        return {"data": []}
+
+    pattern = r"(\b[\w\s]+):\s*([\d.,]+)\s*(billion|million)?"
+    matches = re.findall(pattern, text, flags=re.IGNORECASE)
+
+    insights = []
+    for name, num, unit in matches:
+        try:
+            value = float(num.replace(",", ""))
+            if unit:
+                unit = unit.lower()
+                if unit == "billion":
+                    value *= 1_000_000_000
+                elif unit == "million":
+                    value *= 1_000_000
+            insights.append({"label": name.strip(), "value": int(value)})
+        except:
+            continue
+
+    return {"data": insights[:5]}
