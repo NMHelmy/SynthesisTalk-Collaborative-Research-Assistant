@@ -1,39 +1,62 @@
-from dotenv import load_dotenv
-import os
-import re
-import requests
-from fastapi import FastAPI
+# backend/main.py
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi import UploadFile, File
+from routers import files, upload, extract
+from dotenv import load_dotenv
 from collections import defaultdict
 from pydantic import BaseModel
 from duckduckgo_search import DDGS
+import os
+import requests
+import re
 
 # Load environment variables
 load_dotenv()
-API_KEY  = os.getenv("NGU_API_KEY")
+API_KEY = os.getenv("NGU_API_KEY")
 BASE_URL = os.getenv("NGU_BASE_URL")
-MODEL    = os.getenv("NGU_MODEL")
+MODEL = os.getenv("NGU_MODEL")
 
-# Initialize FastAPI and enable CORS
+headers = {
+    "Authorization": f"Bearer {API_KEY}",
+    "Content-Type": "application/json"
+}
+
 app = FastAPI()
+
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["http://localhost:3000", "*"],  # Replace "*" with frontend origin in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# In-memory chat history (stores only user & assistant roles)
+# Mount uploaded files statically
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
+# Register routers
+app.include_router(files.router, prefix="/api")
+app.include_router(upload.router, prefix="/api")
+app.include_router(extract.router, prefix="/api")
+
+@app.get("/")
+def root():
+    return {"status": "SynthesisTalk Backend Running"}
+
+# In-memory session history
 session_histories = defaultdict(list)
 
 # Request schema for chat
 class ChatRequest(BaseModel):
     session_id: str
     prompt:     str
-    mode:       str = "normal"  # one of: normal, cot, react
+    mode:       str = "normal"  # normal, cot, react
 
-# System prompt generator for each mode
+# Mode-specific system prompts
 def get_system_prompt(mode: str) -> str:
     if mode == 'normal':
         return "You are a helpful assistant. Provide concise, direct answers without revealing your reasoning."
@@ -50,90 +73,67 @@ def get_system_prompt(mode: str) -> str:
             "Thought: [interpret the observation]\n"
             "Answer: [final answer]"
         )
-    return "You are a helpful assistant. Provide concise, direct answers without revealing your reasoning."
+    return "You are a helpful assistant."
 
 # DuckDuckGo search tool
-def search_web(query: str) -> str:
+def run_search(query: str) -> str:
     with DDGS() as ddgs:
         results = ddgs.text(query, max_results=5)
-    lines = [f"- {r.get('title','(no title)')}: {r.get('body','').strip()}" for r in results]
-    return "\n".join(lines) or "No results found."
+        for r in results:
+            return r["body"]
+    return "No results found."
 
 # Core LLM call wrapper
 def call_llm(messages: list) -> str:
-    payload = {"model": MODEL, "messages": messages, "temperature": 0.7, "top_p": 0.9}
-    resp = requests.post(
-        f"{BASE_URL}/chat/completions",
-        json=payload,
-        headers={
-            "Authorization": f"Bearer {API_KEY}",
-            "Content-Type":  "application/json"
-        }
-    )
+    payload = {
+        "model": MODEL,
+        "messages": messages,
+        "temperature": 0.7,
+        "top_p": 0.9
+    }
+    resp = requests.post(f"{BASE_URL}/chat/completions", json=payload, headers=headers)
     resp.raise_for_status()
-    return resp.json()['choices'][0]['message']['content']
+    return resp.json()["choices"][0]["message"]["content"]
 
-# Chat endpoint supporting Normal, CoT, and ReAct
-@app.post("/chat")
+# Final POST chat endpoint
+@app.post("/api/chat")
 async def chat(req: ChatRequest):
     sid = req.session_id
     mode = req.mode.lower()
     prompt = req.prompt.strip()
 
-    # Retrieve persisted history (user & assistant only)
     history = session_histories[sid]
-
     system_msg = {"role": "system", "content": get_system_prompt(mode)}
     messages = [system_msg] + history + [{"role": "user", "content": prompt}]
 
-    # Determine response based on mode
     if mode == 'react':
-        # Step 1: Let the model reason and decide if action is needed
         initial_response = call_llm(messages)
         action_match = re.search(r"Action:\s*(\w+)\[(.*?)\]", initial_response)
 
         if action_match and action_match.group(1).lower() == 'search':
-            tool = action_match.group(1)
             query = action_match.group(2).strip()
+            observation = run_search(query)
 
-            # Step 2: Perform the action (search)
-            observation = search_web(query)
-
-            # Step 3: Construct full response including the observation
-            observation_msg = f"Observation: {observation}"
             messages += [
                 {"role": "assistant", "content": initial_response},
-                {"role": "system", "content": observation_msg}
+                {"role": "system", "content": f"Observation: {observation}"}
             ]
-
-            # Step 4: Ask the model to continue based on the observation
             followup_response = call_llm(messages)
 
-            # Final formatted output
-            reply = (
-                f"{initial_response}\n\n"
-                f"{observation_msg}\n\n"
-                f"{followup_response}"
-            )
+            reply = f"{initial_response}\n\nObservation: {observation}\n\n{followup_response}"
         else:
-            # No action found – fallback to just returning the thought/answer
-            reply = call_llm(messages)
-
+            reply = initial_response
 
     elif mode == 'cot':
-        # Single pass CoT: show step-by-step reasoning then answer
         raw = call_llm(messages)
-        if any(raw.lower().startswith(prefix) for prefix in ["let's think step by step", "let's break this down step by step"]):
+        if any(raw.lower().startswith(prefix) for prefix in ["let's think step by step", "let's break this down"]):
             reply = raw
         else:
             reply = f"Let's think step by step:\n{raw}"
 
-
     else:
-        # Normal mode: direct answer only
         reply = call_llm(messages)
 
-    # Persist user and assistant messages only
     history.append({"role": "user", "content": prompt})
     history.append({"role": "assistant", "content": reply})
 
