@@ -110,19 +110,19 @@ class SearchPayload(BaseModel):
 
 
 # Chat endpoint supporting Normal, CoT, and ReAct
-@app.post("/chat")
+@app.post("/api/chat")
 async def chat(req: ChatRequest):
     sid = req.session_id
     mode = req.mode.lower()
     prompt = req.prompt.strip()
 
-    # Handle direct date queries without LLM
-    if re.search(r"\b(?:date|today)\b", prompt.lower()):
-        today = datetime.now().strftime("%B %d, %Y")
-        reply = f"Today's date is {today}."
-        # Persist reply
-        session_histories[sid].append({"role": "assistant", "content": reply})
-        return {"response": reply}
+    # # Handle direct date queries without LLM
+    # if re.search(r"\b(?:date|today)\b", prompt.lower()):
+    #     today = datetime.now().strftime("%B %d, %Y")
+    #     reply = f"Today's date is {today}."
+    #     # Persist reply
+    #     session_histories[sid].append({"role": "assistant", "content": reply})
+    #     return {"response": reply}
 
 
     # Retrieve persisted history (user & assistant only)
@@ -168,7 +168,7 @@ async def search(payload: SearchPayload):
     result = search_web(payload.query)
     return {"results": result}
 
-@app.post("/visualize")
+@app.post("/api/visualize")
 async def visualize(req: Dict):
     import re
 
@@ -176,7 +176,7 @@ async def visualize(req: Dict):
     if not text:
         return {"data": []}
     # Try to extract lines like "Country: Number unit"
-    pattern = r"(\b[\w\s]+):\s*([\d.,]+)\s*(billion|million)?"
+    pattern = r"(?:\d+\.\s*)?([\w\s]+):\s*([\d.,]+)\s*(trillion|billion|million)?"
     matches = re.findall(pattern, text, flags=re.IGNORECASE)
 
     insights = []
@@ -185,7 +185,9 @@ async def visualize(req: Dict):
             value = float(num.replace(",", ""))
             if unit:
                 unit = unit.lower()
-                if unit == "billion":
+                if unit == "trillion":
+                    value *= 1_000_000_000_000
+                elif unit == "billion":
                     value *= 1_000_000_000
                 elif unit == "million":
                     value *= 1_000_000
