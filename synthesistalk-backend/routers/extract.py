@@ -1,11 +1,13 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Query
 import os
 from pathlib import Path
 from urllib.parse import unquote
+from typing import Optional
 import docx
 import fitz  # PyMuPDF
 from pdf2image import convert_from_path
 import pytesseract
+from state import session_extracted
 
 router = APIRouter()
 
@@ -43,7 +45,7 @@ def extract_text(file_path: Path, content_type: str) -> str:
     raise ValueError("Unsupported file type")
 
 @router.get("/extract/{filename}")
-def extract_existing_file(filename: str):
+def extract_existing_file(filename: str, session_id: Optional[str] = Query(None)):
     filename = unquote(filename)
     file_path = UPLOAD_DIR / filename
 
@@ -73,6 +75,10 @@ def extract_existing_file(filename: str):
 
     if not extracted_text.strip():
         raise HTTPException(status_code=500, detail="No extractable text found.")
+
+    # ✅ Save to session_extracted for export
+    if session_id:
+        session_extracted[session_id] = extracted_text
 
     return {
         "filename": filename,

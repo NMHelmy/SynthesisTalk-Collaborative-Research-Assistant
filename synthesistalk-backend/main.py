@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request, UploadFile, File
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -11,6 +12,10 @@ import requests
 import re
 from datetime import datetime
 from typing import List, Dict
+from docx import Document
+from reportlab.pdfgen import canvas
+from routers import upload, files, extract
+from fastapi.responses import JSONResponse
 
 # Load environment variables
 load_dotenv()
@@ -42,8 +47,59 @@ app.include_router(extract.router, prefix="/api")
 def root():
     return {"status": "SynthesisTalk Backend Running"}
 
-# Session-based memory for chat
-session_histories = defaultdict(list)
+from state import session_histories, session_summaries, session_extracted
+
+def load_chat_history(session_id):
+    return session_histories.get(session_id, [])
+
+def load_summaries(session_id):
+    return session_summaries.get(session_id, [])
+
+def load_extracted_text(session_id):
+    return session_extracted.get(session_id, "")
+
+def generate_pdf(path, chat_data, summaries, extracted_text):
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import A4
+
+    c = canvas.Canvas(path, pagesize=A4)
+    width, height = A4
+    y = height - 50
+    line_height = 15
+
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(50, y, "SynthesisTalk Report")
+    y -= 40
+
+    # Conversation section
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(50, y, "Conversation")
+    y -= 25
+
+    c.setFont("Helvetica", 12)
+    for item in chat_data:
+        if item.get("type") == "chart":
+            continue  # Skip visualized data
+        text = f"{item['role'].capitalize()}: {item['content']}"
+        for line in text.split("\n"):
+            if y <= 40:
+                c.showPage()
+                y = height - 50
+                c.setFont("Helvetica", 12)
+            c.drawString(50, y, line)
+            y -= line_height
+
+    c.save()
+
+def generate_docx(path, chat_data, summaries, extracted_text):
+    doc = Document()
+    doc.add_heading("SynthesisTalk Report", 0)
+
+    doc.add_heading("Conversation", level=1)
+    for item in chat_data:
+        doc.add_paragraph(f"{item['role'].capitalize()}: {item['content']}")
+
+    doc.save(path)
 
 # Input schema
 class ChatRequest(BaseModel):
@@ -56,14 +112,11 @@ class SearchPayload(BaseModel):
 
 # System prompt logic
 
-<<<<<<< HEAD
-=======
 # Web search endpoint (for Web Search button)
 class SearchPayload(BaseModel):
     query: str
 
 # Mode-specific system prompts
->>>>>>> abea6b94bf29175c25a6fdc44332c815239e5b19
 def get_system_prompt(mode: str) -> str:
     if mode == 'normal':
         return "You are a helpful assistant. Provide concise, direct answers without revealing your reasoning."
@@ -90,12 +143,7 @@ def get_system_prompt(mode: str) -> str:
         )
     return "You are a helpful assistant."
 
-<<<<<<< HEAD
-# Web search helper
-
-=======
 # DuckDuckGo search tool
->>>>>>> abea6b94bf29175c25a6fdc44332c815239e5b19
 def search_web(query: str) -> str:
     with DDGS() as ddgs:
         results = ddgs.text(query, max_results=5)
@@ -108,12 +156,7 @@ def search_web(query: str) -> str:
 
     return "<br><br>".join(lines) or "No results found."
 
-<<<<<<< HEAD
-# Call NGU LLM
-
-=======
 # Core LLM call wrapper
->>>>>>> abea6b94bf29175c25a6fdc44332c815239e5b19
 def call_llm(messages: list) -> str:
     payload = {
         "model": MODEL,
@@ -121,25 +164,22 @@ def call_llm(messages: list) -> str:
         "temperature": 0.7,
         "top_p": 0.9
     }
-<<<<<<< HEAD
-    resp = requests.post(f"{BASE_URL}/chat/completions", json=payload, headers={
-=======
     resp = requests.post(f"{BASE_URL}/chat/completions", json=payload, headers= {
->>>>>>> abea6b94bf29175c25a6fdc44332c815239e5b19
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json"
     })
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"]
 
-<<<<<<< HEAD
-# Web search endpoint (for Web Search button)
-class SearchPayload(BaseModel):
-    query: str
+class RestoreRequest(BaseModel):
+    session_id: str
+    messages: List[Dict[str, str]]
 
+@app.post("/api/restore")
+async def restore_chat_history(req: RestoreRequest):
+    session_histories[req.session_id] = req.messages
+    return {"status": "restored", "count": len(req.messages)}
 
-=======
->>>>>>> abea6b94bf29175c25a6fdc44332c815239e5b19
 # Chat endpoint supporting Normal, CoT, and ReAct
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
@@ -168,14 +208,6 @@ async def chat(req: ChatRequest):
         if action_match and action_match.group(1).lower() == 'search':
             query = action_match.group(2).strip()
             observation = search_web(query)
-<<<<<<< HEAD
-            messages += [
-                {"role": "assistant", "content": initial_response},
-                {"role": "system", "content": f"Observation: {observation}"}
-            ]
-            followup_response = call_llm(messages)
-            reply = f"{initial_response}\n\nObservation: {observation}\n\n{followup_response}"
-=======
 
             # Format a cleaner Observation for the LLM
             observation_msg = f"Observation: {observation}"
@@ -188,7 +220,7 @@ async def chat(req: ChatRequest):
             followup_response = call_llm(messages)
 
             reply = f"{initial_response}\n\n{observation_msg}\n\n{followup_response}"
->>>>>>> abea6b94bf29175c25a6fdc44332c815239e5b19
+
         else:
             reply = initial_response
 
@@ -210,26 +242,21 @@ async def chat(req: ChatRequest):
     elif mode == 'normal':
         reply = call_llm(messages)
 
+        # Save summary if prompt includes summarize
+        if "summarize" in prompt.lower():
+            points = [p.strip("•- ") for p in reply.split("\n") if p.strip()]
+            session_summaries[sid] = points
+
+
     history.append({"role": "user", "content": prompt})
     history.append({"role": "assistant", "content": reply})
 
     return {"response": reply}
 
-<<<<<<< HEAD
-# Search endpoint
-=======
->>>>>>> abea6b94bf29175c25a6fdc44332c815239e5b19
 @app.post("/api/search")
 async def search(payload: SearchPayload):
     result = search_web(payload.query)
     return {"results": result}
-<<<<<<< HEAD
-
-@app.post("/api/visualize")
-async def visualize(req: Dict):
-    import re
-=======
->>>>>>> abea6b94bf29175c25a6fdc44332c815239e5b19
 
 @app.post("/api/visualize")
 async def visualize(req: Dict):
@@ -255,9 +282,40 @@ async def visualize(req: Dict):
             insights.append({"label": name.strip(), "value": int(value)})
         except:
             continue
-<<<<<<< HEAD
     return {"data": insights[:5]}  # limit to 5 results
 
-=======
-    return {"data": insights[:5]}  # limit to 5 results
->>>>>>> abea6b94bf29175c25a6fdc44332c815239e5b19
+@app.post("/api/export")
+async def export_report(request: Request):
+    data = await request.json()
+    session_id = data.get("session_id")
+    export_format = data.get("format", "pdf")
+
+    chat_data = load_chat_history(session_id)
+    summaries = load_summaries(session_id)
+    extracted_text = load_extracted_text(session_id)
+
+    if not chat_data:
+        return JSONResponse({"error": "No chat data found for this session."}, status_code=400)
+
+    # Use first user message as filename
+    first_user_message = next((item['content'] for item in chat_data if item['role'] == 'user'), "SynthesisTalk")
+    safe_title = re.sub(r'[^a-zA-Z0-9_]+', '_', first_user_message.strip())[:40]
+    filename_base = safe_title or f"SynthesisTalk_{session_id}"
+    filename = f"{filename_base}.{export_format}"
+    filepath = os.path.join("exports", filename)
+    os.makedirs("exports", exist_ok=True)
+
+    try:
+        if export_format == "pdf":
+            generate_pdf(filepath, chat_data, summaries, extracted_text)
+        elif export_format == "docx":
+            generate_docx(filepath, chat_data, summaries, extracted_text)
+        else:
+            return JSONResponse({"error": "Unsupported format"}, status_code=400)
+
+        if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
+            return JSONResponse({"error": "Generated file is empty or missing"}, status_code=500)
+
+        return FileResponse(path=filepath, filename=filename, media_type="application/octet-stream")
+    except Exception as e:
+        return JSONResponse({"error": f"Export failed: {str(e)}"}, status_code=500)

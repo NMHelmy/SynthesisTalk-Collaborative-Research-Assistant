@@ -6,13 +6,15 @@ import json
 router = APIRouter()
 DATA_PATH = "data/files.json"
 
-@router.post("/upload")
-async def upload_files(files: list[UploadFile] = File(...)):
-    os.makedirs("uploads", exist_ok=True)
+@router.post("/upload/{user_id}")
+async def upload_files(user_id: str, files: list[UploadFile] = File(...)):
+    user_folder = os.path.join("uploads", user_id)
+    os.makedirs(user_folder, exist_ok=True)
     os.makedirs("data", exist_ok=True)
 
-    if os.path.exists(DATA_PATH):
-        with open(DATA_PATH, "r") as f:
+    user_data_path = f"data/{user_id}_files.json"
+    if os.path.exists(user_data_path):
+        with open(user_data_path, "r") as f:
             existing = json.load(f)
     else:
         existing = []
@@ -21,9 +23,7 @@ async def upload_files(files: list[UploadFile] = File(...)):
 
     for file in files:
         contents = await file.read()
-        save_path = os.path.join("uploads", file.filename)
-        print("Saved file to:", save_path)
-
+        save_path = os.path.join(user_folder, file.filename)
         with open(save_path, "wb") as f:
             f.write(contents)
 
@@ -36,7 +36,8 @@ async def upload_files(files: list[UploadFile] = File(...)):
             existing.append(entry)
             uploaded.append(file.filename)
 
-    with open(DATA_PATH, "w") as f:
+    with open(user_data_path, "w") as f:
         json.dump(existing, f, indent=2)
 
     return {"message": f"Uploaded files: {uploaded}"}
+

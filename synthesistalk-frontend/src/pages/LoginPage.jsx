@@ -30,9 +30,17 @@ export default function LoginPage() {
     setGeneralMessage("");
 
     try {
-      await signInWithEmailAndPassword(auth, formData.email, formData.password);
-      setGeneralMessage("Login successful. Redirecting...");
-      setTimeout(() => navigate("/chat"), 1000);
+      const result = await signInWithEmailAndPassword(auth, formData.email, formData.password);
+
+if (!result.user.emailVerified) {
+  await auth.signOut(); // Log out unverified users
+  setGeneralMessage("Please verify your email before logging in.");
+  return;
+}
+
+setGeneralMessage("Login successful. Redirecting...");
+setTimeout(() => navigate("/chat"), 1000);
+
     } catch (error) {
       const code = error.code;
       if (code === "auth/invalid-email") {

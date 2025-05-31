@@ -23,6 +23,15 @@ async def list_files():
         files = json.load(f)
     return {"files": files}
 
+@router.get("/files/{user_id}")
+async def list_user_files(user_id: str):
+    user_data_path = f"data/{user_id}_files.json"
+    if not os.path.exists(user_data_path):
+        return {"files": []}
+    with open(user_data_path, "r") as f:
+        files = json.load(f)
+    return {"files": files}
+
 @router.delete("/files/{filename}")
 async def delete_file(filename: str):
     decoded_filename = unquote(filename)
