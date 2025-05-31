@@ -58,6 +58,17 @@ export default function ChatPage() {
     setChatHistory(history);
   };
   
+  const fetchFiles = async () => {
+    try {
+      const response = await fetch("http://localhost:8000/api/files");
+      const data = await response.json();
+      if (data.files) {
+        setFiles(data.files);
+      }
+    } catch (error) {
+      console.error("Error fetching files:", error);
+    }
+  };
 
   const handleSend = async () => {
     if (!input.trim() && uploadedFilesToSend.length === 0) return;
@@ -140,7 +151,7 @@ export default function ChatPage() {
       const res = await fetch("http://localhost:8000/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: finalPrompt, mode: reasoningMode }),
+        body: JSON.stringify({ session_id: sessionId, prompt: finalPrompt, mode: reasoningMode }),
       });
 
       const data = await res.json();

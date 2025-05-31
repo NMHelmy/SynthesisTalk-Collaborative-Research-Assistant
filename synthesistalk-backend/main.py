@@ -1,5 +1,3 @@
-# backend/main.py
-
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -15,6 +13,7 @@ import re
 
 # Load environment variables
 load_dotenv()
+
 API_KEY = os.getenv("NGU_API_KEY")
 BASE_URL = os.getenv("NGU_BASE_URL")
 MODEL = os.getenv("NGU_MODEL")
@@ -53,8 +52,8 @@ session_histories = defaultdict(list)
 # Request schema for chat
 class ChatRequest(BaseModel):
     session_id: str
-    prompt:     str
-    mode:       str = "normal"  # normal, cot, react
+    prompt: str
+    mode: str = "normal"  # normal, cot, react
 
 # Mode-specific system prompts
 def get_system_prompt(mode: str) -> str:
