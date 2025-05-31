@@ -1,5 +1,3 @@
-// src/pages/SignupPage.jsx
-
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -8,7 +6,7 @@ import {
   fetchSignInMethodsForEmail,
 } from "firebase/auth";
 import { auth } from "../firebase";
-import { FiUser, FiMail, FiLock } from "react-icons/fi";
+import { FiUser, FiMail, FiLock, FiEye, FiEyeOff } from "react-icons/fi";
 
 export default function SignupPage() {
   const navigate = useNavigate();
@@ -24,6 +22,8 @@ export default function SignupPage() {
   const [passwordError, setPasswordError] = useState("");
   const [confirmPasswordError, setConfirmPasswordError] = useState("");
   const [generalMessage, setGeneralMessage] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -168,7 +168,7 @@ export default function SignupPage() {
           <div className="flex items-center w-full bg-[#5A5A5A] px-6 py-3 rounded-md shadow-lg">
             <FiLock className="mr-3 text-white text-2xl" />
             <input
-              type="password"
+              type={showPassword ? "text" : "password"}
               name="password"
               placeholder="Password"
               value={formData.password}
@@ -177,6 +177,13 @@ export default function SignupPage() {
               style={{ fontFamily: '"Abril Fatface", cursive' }}
               required
             />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="ml-2 text-white focus:outline-none"
+            >
+              {showPassword ? <FiEyeOff className="text-xl" /> : <FiEye className="text-xl" />}
+            </button>
           </div>
           {passwordError && <p className="text-sm text-red-500 mt-1">{passwordError}</p>}
         </div>
@@ -186,7 +193,7 @@ export default function SignupPage() {
           <div className="flex items-center w-full bg-[#5A5A5A] px-6 py-3 rounded-md shadow-lg">
             <FiLock className="mr-3 text-white text-2xl" />
             <input
-              type="password"
+              type={showConfirmPassword ? "text" : "password"}
               name="confirmPassword"
               placeholder="Confirm Password"
               value={formData.confirmPassword}
@@ -195,6 +202,13 @@ export default function SignupPage() {
               style={{ fontFamily: '"Abril Fatface", cursive' }}
               required
             />
+            <button
+              type="button"
+              onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+              className="ml-2 text-white focus:outline-none"
+            >
+              {showConfirmPassword ? <FiEyeOff className="text-xl" /> : <FiEye className="text-xl" />}
+            </button>
           </div>
           {confirmPasswordError && <p className="text-sm text-red-500 mt-1">{confirmPasswordError}</p>}
         </div>

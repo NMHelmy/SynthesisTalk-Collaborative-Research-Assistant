@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+openai
+python-multipart
+pdfplumber
+python-docx
+duckduckgo-search

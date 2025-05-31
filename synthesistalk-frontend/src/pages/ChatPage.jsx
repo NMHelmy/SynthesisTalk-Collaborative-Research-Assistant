@@ -12,7 +12,9 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(false);
   const [reasoningMode, setReasoningMode] = useState("normal");
   const [sessionId, setSessionId] = useState(null);
-
+  const [reasoningMode, setReasoningMode] = useState("normal");
+  const [files, setFiles] = useState([]);
+  const fileInputRef = useRef(null);
   const navigate = useNavigate();
   const user = auth.currentUser;
 
@@ -67,35 +69,194 @@ export default function ChatPage() {
       ]);
     }
   };
+  
 
   const handleSend = async () => {
-    if (!input.trim() || !sessionId) return;
+    if (!input.trim() && uploadedFilesToSend.length === 0) return;
 
-    const newUserMessage = { role: "user", content: input };
-    setMessages((prev) => [...prev, newUserMessage]);
     setLoading(true);
 
+    let finalPrompt = input.trim();  // your actual message
+    let displayMessage = "";         // what shows in chat
+    let extractedTexts = [];
+
+    if (uploadedFilesToSend.length > 0) {
+      try {
+        // Step 1: Upload the files
+        const formData = new FormData();
+        uploadedFilesToSend.forEach((file) => formData.append("files", file));
+        await fetch("http://localhost:8000/api/upload", {
+          method: "POST",
+          body: formData,
+        });
+        // Save metadata of uploaded files to Firestore
+        for (const file of uploadedFilesToSend) {
+          try {
+            await addDoc(collection(db, "documents"), {
+              filename: file.name,
+              uploadedBy: user?.uid || "anonymous",
+              uploadedAt: Timestamp.now(),
+              downloadUrl: `http://localhost:8000/uploads/${encodeURIComponent(file.name)}`
+            });
+          } catch (error) {
+            console.error("Failed to store file metadata:", error);
+          }
+        }
+
+        console.log("Uploaded files:", uploadedFilesToSend.map(f => f.name));
+
+        await fetchFiles(); // update sidebar
+
+        // Step 2: Extract text from each uploaded file
+        for (const file of uploadedFilesToSend) {
+          const filename = encodeURIComponent(file.name);
+          const res = await fetch(`http://localhost:8000/api/extract/${filename}`);
+          if (!res.ok) {
+            const error = await res.json();
+            console.error("Extraction error:", error);
+            throw new Error(error.detail || "Extraction failed");
+          }
+          const data = await res.json();
+          if (data.text) {
+            extractedTexts.push(`--- Content of ${file.name} ---\n${data.text}`);
+          }
+          // Show file in chat
+          displayMessage += `📄 ${file.name}\n`;
+        }
+
+        // Step 3: Combine for LLM
+        finalPrompt = extractedTexts.join("\n\n") +
+          (finalPrompt ? `\n\nUser's question:\n${finalPrompt}` : "");
+
+      } catch (err) {
+        alert("Failed to process uploaded files");
+        setLoading(false);
+        return;
+      }
+    }
+
+    // Step 4: Show the user's message in chat
+    if (input.trim()) {
+      if (uploadedFilesToSend.length > 0) {
+        displayMessage += `\n${input.trim()}`;
+      } else {
+        displayMessage += input.trim();
+      }
+    }
+    const newUserMessage = { role: "user", content: displayMessage };
+    const updatedMessages = [...messages, newUserMessage];
+    setMessages(updatedMessages);
+
+    // Step 5: Send to LLM
     try {
-      const res = await fetch("http://127.0.0.1:8000/chat", {
+      const res = await fetch("http://localhost:8000/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          session_id: sessionId,
-          prompt: input,
-          mode: reasoningMode,
-        }),
+        body: JSON.stringify({ prompt: finalPrompt, mode: reasoningMode }),
       });
 
       const data = await res.json();
+
       if (data.response) {
         const assistantMessage = { role: "assistant", content: data.response };
-        setMessages((prev) => [...prev, assistantMessage]);
+        const finalMessages = [...updatedMessages, assistantMessage];
+        setMessages(finalMessages);
+
+        // Generate title based on first user message
+        let title = "New Chat";
+        const firstUserMessage = updatedMessages.find(m => m.role === "user");
+        if (firstUserMessage) {
+          const content = firstUserMessage.content.trim();
+          if (content.startsWith("📄")) {
+            const match = content.match(/^📄\s*(.+)/);
+            if (match) {
+              title = match[1].split("\n")[0].trim(); // Extract file name
+            }
+          } else {
+            title = content.slice(0, 40); // Text input fallback
+          }
+        }
+
+        saveChatHistory(chatId, title, finalMessages);
       } else {
         alert("Error: " + data.error);
       }
     } catch (error) {
-      console.error("Error sending message:", error);
       alert("Failed to contact server.");
+    }
+
+    setInput("");
+    setUploadedFilesToSend([]);
+    setLoading(false);
+  };
+
+
+  const handleUploadClick = () => {
+    fileInputRef.current.click();
+  };
+
+  const handleSummarizedKeyPoints = async () => {
+    if (uploadedFilesToSend.length === 0) {
+      alert("Please upload a document first.");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      // Step 1: Upload the document(s)
+      const formData = new FormData();
+      uploadedFilesToSend.forEach((file) => formData.append("files", file));
+      await fetch("http://localhost:8000/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+      await fetchFiles(); // refresh sidebar
+
+      // Step 2: Extract text
+      let extractedTexts = [];
+      for (const file of uploadedFilesToSend) {
+        const filename = encodeURIComponent(file.name);
+        const res = await fetch(`http://localhost:8000/api/extract/${filename}`);
+        const data = await res.json();
+        if (data.text) {
+          extractedTexts.push(data.text);
+        }
+      }
+
+      // Step 3: Send summarization prompt to LLM
+      const finalPrompt = `Summarize the key points from this document:\n\n${extractedTexts.join("\n\n")}`;
+      const displayMessage = uploadedFilesToSend.map(f => f.name).join(", ");
+
+      setMessages(prev => [...prev, { role: "user", content: displayMessage }]);
+
+      const res = await fetch("http://localhost:8000/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: finalPrompt, mode: reasoningMode }),
+      });
+
+      const data = await res.json();
+      if (data.response) {
+        setMessages(prev => [...prev, { role: "assistant", content: data.response }]);
+      } else {
+        alert("Error: " + data.error);
+      }
+
+      setUploadedFilesToSend([]);
+    } catch (error) {
+      console.error(error);
+      alert("Failed to summarize document.");
+    }
+
+    setLoading(false);
+  };
+
+  const handleFileChange = (e) => {
+    const selected = Array.from(e.target.files);
+    if (selected.length > 0) {
+      setUploadedFilesToSend((prev) => [...prev, ...selected]);
+      e.target.value = ""; 
     }
 
     setInput("");
@@ -210,7 +371,124 @@ export default function ChatPage() {
             <button onClick={handleWebSearch} disabled={loading} className="bg-white px-3 py-1 rounded shadow">
               🔍 Web Search Results
             </button>
-            <button className="bg-white px-3 py-1 rounded shadow">
+            <button
+              className="bg-white px-3 py-1 rounded shadow"
+              onClick={async () => {
+                setInput("Summarize key points");
+                if (uploadedFilesToSend.length === 0 && messages.length === 0) {
+                  alert("Please upload a document or start a conversation first.");
+                  return;
+                }
+
+                setLoading(true);
+
+                if (uploadedFilesToSend.length > 0) {
+                  try {
+                    const formData = new FormData();
+                    uploadedFilesToSend.forEach((file) => formData.append("files", file));
+
+                    await fetch("http://localhost:8000/api/upload", {
+                      method: "POST",
+                      body: formData,
+                    });
+
+                    for (const file of uploadedFilesToSend) {
+                      try {
+                        await addDoc(collection(db, "documents"), {
+                          filename: file.name,
+                          uploadedBy: user?.uid || "anonymous",
+                          uploadedAt: Timestamp.now(),
+                          downloadUrl: `http://localhost:8000/uploads/${encodeURIComponent(file.name)}`
+                        });
+                      } catch (err) {
+                        console.error("Failed to save document metadata:", err);
+                      }
+                    }
+
+                    const extractedTexts = [];
+                    for (const file of uploadedFilesToSend) {
+                      const filename = encodeURIComponent(file.name);
+                      const res = await fetch(`http://localhost:8000/api/extract/${filename}`);
+                      const data = await res.json();
+
+                      if (data.text) {
+                        extractedTexts.push(`--- Content of ${file.name} ---\n${data.text}`);
+                      }
+                    }
+
+                    const prompt = `Summarize the key points from the following documents:\n\n${extractedTexts.join("\n\n")}`;
+                    const filenamesText = uploadedFilesToSend.map(f => f.name).join(", ");
+
+                    const newMessages = [
+                      { role: "user", content: filenamesText },
+                      { role: "user", content: "Summarize key points" }
+                    ];
+                    setMessages(prev => [...prev, ...newMessages]);
+
+                    const res = await fetch("http://localhost:8000/api/chat", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        prompt,
+                        mode: reasoningMode
+                      }),
+                    });
+
+                    const data = await res.json();
+
+                    if (data.response) {
+                      const assistantMessage = { role: "assistant", content: `📌 **Key Points from ${filenamesText}:**\n${data.response}` };
+                      const finalMessages = [...messages, ...newMessages, assistantMessage];
+                      setMessages(finalMessages);
+
+                      await saveChatHistory(chatId, filenamesText, finalMessages);
+                    } else {
+                      alert("Summarization failed: " + data.error);
+                    }
+
+                    setInput("");
+                    setUploadedFilesToSend([]);
+                  } catch (err) {
+                    console.error(err);
+                    alert("Failed to summarize uploaded files.");
+                  }
+                } else {
+                  // If no uploaded files, summarize the conversation
+                  try {
+                    const context = messages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
+
+                    const res = await fetch("http://localhost:8000/api/chat", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        prompt: `Please extract and summarize the key points from the following conversation or content:\n\n${context}\n\nReturn them as concise bullet points.`,
+                        mode: reasoningMode
+                      }),
+                    });
+
+                    const data = await res.json();
+
+                    if (data.response) {
+                      const userMsg = { role: "user", content: "Summarize key points" };
+                      const assistantMsg = { role: "assistant", content: `📌 **Key Points:**\n${data.response}` };
+                      const finalMessages = [...messages, userMsg, assistantMsg];
+                      setMessages(finalMessages);
+
+                      await saveChatHistory(chatId, "Summarized Chat", finalMessages);
+                      setInput("");
+                    } else {
+                      alert("Summarization failed: " + data.error);
+                    }
+                  } catch (err) {
+                    alert("Failed to summarize.");
+                  }
+                }
+
+                setLoading(false);
+              }}
+
+
+            >
               📄 Summarized key points
             </button>
             <button onClick={handleVisualize} className="bg-white px-3 py-1 rounded shadow">
@@ -218,6 +496,7 @@ export default function ChatPage() {
             </button>
           </div>
         </footer>
+
       </div>
 
       {showProfile && (
