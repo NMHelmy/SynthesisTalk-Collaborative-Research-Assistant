@@ -7,9 +7,10 @@ from dotenv import load_dotenv
 from collections import defaultdict
 from pydantic import BaseModel
 from duckduckgo_search import DDGS
-import os
-import requests
-import re
+from datetime import datetime
+import json  
+from typing import List, Dict
+
 
 # Load environment variables
 load_dotenv()
@@ -63,7 +64,7 @@ def get_system_prompt(mode: str) -> str:
         return "You are a thoughtful assistant. Let's think step by step and show your reasoning."
     elif mode == 'react':
         return (
-            "You are an AI agent that thinks step by step and acts when needed.\n"
+            "You are an AI agent that thinks and acts when needed.\n"
             "Use this format:\n"
             "Thought: [reasoning]\n"
             "Action: [tool][query]\n"
@@ -78,9 +79,16 @@ def get_system_prompt(mode: str) -> str:
 def run_search(query: str) -> str:
     with DDGS() as ddgs:
         results = ddgs.text(query, max_results=5)
-        for r in results:
-            return r["body"]
-    return "No results found."
+
+    lines = []
+    for r in results:
+        title = r.get("title", "(no title)")
+        body = r.get("body", "").strip()
+        href = r.get("href", "")
+        lines.append(f"- <a href='{href}' target='_blank'><strong>{title}</strong></a><br>{body}")
+
+    return "<br><br>".join(lines) or "No results found."
+
 
 # Core LLM call wrapper
 def call_llm(messages: list) -> str:
@@ -94,13 +102,44 @@ def call_llm(messages: list) -> str:
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"]
 
-# Final POST chat endpoint
-@app.post("/api/chat")
+def parse_number(value):
+    try:
+        value = value.lower().replace(",", "").strip()
+        if "billion" in value:
+            return float(value.split()[0]) * 1_000_000_000
+        elif "million" in value:
+            return float(value.split()[0]) * 1_000_000
+        else:
+            return float(value.split()[0])
+    except:
+        return None
+
+# Web search endpoint (for Web Search button)
+class SearchPayload(BaseModel):
+    query: str
+
+@app.post("/search")
+async def search(payload: SearchPayload):
+    result = search_web(payload.query)
+    return {"results": result}
+
+# Chat endpoint supporting Normal, CoT, and ReAct
+@app.post("/chat")
 async def chat(req: ChatRequest):
     sid = req.session_id
     mode = req.mode.lower()
     prompt = req.prompt.strip()
 
+    # Handle direct date queries without LLM
+    if re.search(r"\b(?:date|today)\b", prompt.lower()):
+        today = datetime.now().strftime("%B %d, %Y")
+        reply = f"Today's date is {today}."
+        # Persist reply
+        session_histories[sid].append({"role": "assistant", "content": reply})
+        return {"response": reply}
+
+
+    # Retrieve persisted history (user & assistant only)
     history = session_histories[sid]
     system_msg = {"role": "system", "content": get_system_prompt(mode)}
     messages = [system_msg] + history + [{"role": "user", "content": prompt}]
@@ -123,7 +162,8 @@ async def chat(req: ChatRequest):
         else:
             reply = initial_response
 
-    elif mode == 'cot':
+    if mode == 'cot':
+        # Single pass CoT: show step-by-step reasoning then answer
         raw = call_llm(messages)
         if any(raw.lower().startswith(prefix) for prefix in ["let's think step by step", "let's break this down"]):
             reply = raw
@@ -137,3 +177,33 @@ async def chat(req: ChatRequest):
     history.append({"role": "assistant", "content": reply})
 
     return {"response": reply}
+
+@app.post("/visualize")
+async def visualize(req: Dict):
+    import re
+
+    text = req.get("text", "").strip()
+    if not text:
+        return {"data": []}
+
+    # Try to extract lines like "Country: Number unit"
+    pattern = r"(\b[\w\s]+):\s*([\d.,]+)\s*(billion|million)?"
+    matches = re.findall(pattern, text, flags=re.IGNORECASE)
+
+    insights = []
+    for name, num, unit in matches:
+        try:
+            value = float(num.replace(",", ""))
+            if unit:
+                unit = unit.lower()
+                if unit == "billion":
+                    value *= 1_000_000_000
+                elif unit == "million":
+                    value *= 1_000_000
+            insights.append({"label": name.strip(), "value": int(value)})
+        except:
+            continue
+
+    return {"data": insights[:5]}  # limit to 5 results
+
+
