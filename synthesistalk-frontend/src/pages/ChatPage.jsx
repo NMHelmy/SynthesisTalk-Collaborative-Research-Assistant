@@ -105,7 +105,8 @@ export default function ChatPage() {
     };
     const finalMessages = [...initialMessages, chartMessage];
     setMessages(finalMessages);
-    await saveChatHistory(chatId, cleanedInput.split("\n")[0].slice(0, 40), finalMessages);
+    const title = cleanedInput.split("\n")[0].slice(0, 40);
+    await saveChatHistory(chatId, title, finalMessages);
   } else {
     const failMessage = {
       role: "assistant",
@@ -493,7 +494,12 @@ export default function ChatPage() {
         <img src="/assets/logo.png" alt="Logo" className="absolute top-4 right-4 w-12 h-auto" />
 
         <div className="flex-1 flex flex-col space-y-4 w-full max-w-2xl px-4 overflow-y-auto hide-scrollbar">
-          {messages.map((msg, idx) => (
+          {messages.length === 0 ? (
+            <div className="mt-24 text-center text-white text-5xl" style={{ fontFamily: '"Abril Fatface", cursive' }}>
+            Where should we begin?
+            </div>
+          ) : (
+          messages.map((msg, idx) => (
             <div
               key={idx}
               className={`p-3 rounded-lg ${
@@ -505,7 +511,7 @@ export default function ChatPage() {
             >
               {msg.type === "chart" ? (
                 <div className="w-full bg-white rounded-xl shadow p-4 overflow-x-auto">
-                  <div className=" ">
+                  <div className="min-w-[550px]">
                     <InsightsChart data={msg.data} />
                   </div>
                 </div>
@@ -519,7 +525,7 @@ export default function ChatPage() {
                 />
               )}
             </div>
-          ))}
+          )))}
           {loading && <div className="text-white text-sm">Thinking...</div>}
         </div>
 
@@ -720,9 +726,26 @@ export default function ChatPage() {
 
       {showProfile && (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50">
-          {/* profile modal here */}
+          <div className="bg-[#2c2c2c] text-white rounded-lg shadow-lg p-8 w-80 text-center relative">
+            <button
+              onClick={() => setShowProfile(false)}
+              className="absolute top-2 right-2 text-white text-xl"
+            >
+              ✖
+            </button>
+            <img
+              src="/assets/profile_icon.png"
+              alt="User"
+              className="w-20 h-20 mx-auto mb-4 rounded-full border-2 border-white"
+            />
+            <h2 className="text-2xl font-semibold mb-2" style={{ fontFamily: '"Abril Fatface", cursive' }}>
+              {user?.displayName || "Guest"}
+            </h2>
+            <p className="text-sm text-gray-300">{user?.email}</p>
+          </div>
         </div>
       )}
+
     </div>
   );
 }

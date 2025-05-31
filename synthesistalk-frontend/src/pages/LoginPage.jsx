@@ -139,7 +139,7 @@ export default function LoginPage() {
               onClick={() => setShowPassword(!showPassword)}
               className="ml-2 text-white focus:outline-none"
             >
-              {showPassword ? <FiEyeOff className="text-xl" /> : <FiEye className="text-xl" />}
+              {showPassword ? <FiEye className="text-xl" /> : <FiEyeOff className="text-xl" />}
             </button>
           </div>
           {passwordError && <p className="text-sm text-red-500 mt-1">{passwordError}</p>}
