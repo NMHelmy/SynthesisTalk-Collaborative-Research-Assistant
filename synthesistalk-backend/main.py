@@ -1,18 +1,16 @@
-# backend/main.py
-
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi import UploadFile, File
+from pydantic import BaseModel
+from collections import defaultdict
+from duckduckgo_search import DDGS
 from routers import files, upload, extract
 from dotenv import load_dotenv
-from collections import defaultdict
-from pydantic import BaseModel
-from duckduckgo_search import DDGS
+import os
+import requests
+import re
 from datetime import datetime
-import json  
 from typing import List, Dict
-
 
 # Load environment variables
 load_dotenv()
@@ -20,11 +18,7 @@ API_KEY = os.getenv("NGU_API_KEY")
 BASE_URL = os.getenv("NGU_BASE_URL")
 MODEL = os.getenv("NGU_MODEL")
 
-headers = {
-    "Authorization": f"Bearer {API_KEY}",
-    "Content-Type": "application/json"
-}
-
+# Initialize FastAPI app
 app = FastAPI()
 
 # Enable CORS
@@ -57,30 +51,41 @@ class ChatRequest(BaseModel):
     prompt:     str
     mode:       str = "normal"  # normal, cot, react
 
+# Web search endpoint (for Web Search button)
+class SearchPayload(BaseModel):
+    query: str
+
 # Mode-specific system prompts
 def get_system_prompt(mode: str) -> str:
     if mode == 'normal':
         return "You are a helpful assistant. Provide concise, direct answers without revealing your reasoning."
     elif mode == 'cot':
-        return "You are a thoughtful assistant. Let's think step by step and show your reasoning."
+        return (
+            "Let's think step by step. Provide a clear reasoning chain to solve the problem."
+            " Use numbers, equations, and logic when needed. Finish with 'The answer is ...'."
+        )
+        
     elif mode == 'react':
         return (
-            "You are an AI agent that thinks and acts when needed.\n"
-            "Use this format:\n"
+            "You are an AI assistant that uses ReAct (Reasoning + Acting).\n"
+            "When you face a question requiring up-to-date or external info, follow this format:\n\n"
             "Thought: [reasoning]\n"
-            "Action: [tool][query]\n"
-            "When you receive an observation, continue with:\n"
-            "Observation: [result]\n"
-            "Thought: [interpret the observation]\n"
-            "Answer: [final answer]"
+            "Action: search[query]\n\n"
+            "After receiving an observation from the tool, continue with:\n"
+            "Observation: [real result]\n"
+            "Thought: [reflect on the observation]\n"
+            "Answer: [final answer based ONLY on the observation]\n\n"
+            "Do not say you lack access to real-time data if a search tool is available.\n"
+            "Always complete the Thought → Action → Observation → Answer flow."
+            "Always wait for the observation before answering."
+            "DO NOT answer before receiving an observation.\n"
         )
     return "You are a helpful assistant."
 
 # DuckDuckGo search tool
-def run_search(query: str) -> str:
+def search_web(query: str) -> str:
     with DDGS() as ddgs:
         results = ddgs.text(query, max_results=5)
-
     lines = []
     for r in results:
         title = r.get("title", "(no title)")
@@ -90,7 +95,6 @@ def run_search(query: str) -> str:
 
     return "<br><br>".join(lines) or "No results found."
 
-
 # Core LLM call wrapper
 def call_llm(messages: list) -> str:
     payload = {
@@ -99,33 +103,15 @@ def call_llm(messages: list) -> str:
         "temperature": 0.7,
         "top_p": 0.9
     }
-    resp = requests.post(f"{BASE_URL}/chat/completions", json=payload, headers=headers)
+    resp = requests.post(f"{BASE_URL}/chat/completions", json=payload, headers= {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json"
+    })
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"]
 
-def parse_number(value):
-    try:
-        value = value.lower().replace(",", "").strip()
-        if "billion" in value:
-            return float(value.split()[0]) * 1_000_000_000
-        elif "million" in value:
-            return float(value.split()[0]) * 1_000_000
-        else:
-            return float(value.split()[0])
-    except:
-        return None
-
-# Web search endpoint (for Web Search button)
-class SearchPayload(BaseModel):
-    query: str
-
-@app.post("/search")
-async def search(payload: SearchPayload):
-    result = search_web(payload.query)
-    return {"results": result}
-
 # Chat endpoint supporting Normal, CoT, and ReAct
-@app.post("/chat")
+@app.post("/api/chat")
 async def chat(req: ChatRequest):
     sid = req.session_id
     mode = req.mode.lower()
@@ -151,27 +137,38 @@ async def chat(req: ChatRequest):
 
         if action_match and action_match.group(1).lower() == 'search':
             query = action_match.group(2).strip()
-            observation = run_search(query)
+            observation = search_web(query)
 
-            messages += [
-                {"role": "assistant", "content": initial_response},
-                {"role": "system", "content": f"Observation: {observation}"}
-            ]
+            # Format a cleaner Observation for the LLM
+            observation_msg = f"Observation: {observation}"
+
+            # Append LLM's Action response + Observation
+            messages.append({"role": "assistant", "content": initial_response})
+            messages.append({"role": "assistant", "content": observation_msg})
+
+            # Second LLM call: reflect and respond based on the real observation
             followup_response = call_llm(messages)
 
-            reply = f"{initial_response}\n\nObservation: {observation}\n\n{followup_response}"
+            reply = f"{initial_response}\n\n{observation_msg}\n\n{followup_response}"
         else:
             reply = initial_response
 
-    if mode == 'cot':
-        # Single pass CoT: show step-by-step reasoning then answer
-        raw = call_llm(messages)
-        if any(raw.lower().startswith(prefix) for prefix in ["let's think step by step", "let's break this down"]):
-            reply = raw
-        else:
-            reply = f"Let's think step by step:\n{raw}"
+    elif mode == 'cot':
+        response = call_llm(messages)
+        # Block any ReAct-style behavior in CoT mode
+        if "Action:" in response or "Observation:" in response:
+            # Remove any such patterns if they sneak in
+            response = re.sub(r"Action:.*?\n", "", response)
+            response = re.sub(r"Observation:.*?\n", "", response)
 
-    else:
+        # Add CoT prefix only if not already present
+        reply = response
+        if not reply.lower().startswith("let's think") and "step" not in reply.lower():
+            reply = "Let's think step by step.\n" + reply
+
+
+
+    elif mode == 'normal':
         reply = call_llm(messages)
 
     history.append({"role": "user", "content": prompt})
@@ -179,16 +176,18 @@ async def chat(req: ChatRequest):
 
     return {"response": reply}
 
-@app.post("/visualize")
-async def visualize(req: Dict):
-    import re
+@app.post("/api/search")
+async def search(payload: SearchPayload):
+    result = search_web(payload.query)
+    return {"results": result}
 
+@app.post("/api/visualize")
+async def visualize(req: Dict):
     text = req.get("text", "").strip()
     if not text:
         return {"data": []}
-
     # Try to extract lines like "Country: Number unit"
-    pattern = r"(\b[\w\s]+):\s*([\d.,]+)\s*(billion|million)?"
+    pattern = r"(?:\d+\.\s*)?([\w\s]+):\s*([\d.,]+)\s*(trillion|billion|million)?"
     matches = re.findall(pattern, text, flags=re.IGNORECASE)
 
     insights = []
@@ -197,14 +196,13 @@ async def visualize(req: Dict):
             value = float(num.replace(",", ""))
             if unit:
                 unit = unit.lower()
-                if unit == "billion":
+                if unit == "trillion":
+                    value *= 1_000_000_000_000
+                elif unit == "billion":
                     value *= 1_000_000_000
                 elif unit == "million":
                     value *= 1_000_000
             insights.append({"label": name.strip(), "value": int(value)})
         except:
             continue
-
     return {"data": insights[:5]}  # limit to 5 results
-
-
