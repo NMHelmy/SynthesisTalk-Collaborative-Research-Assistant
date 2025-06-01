@@ -31,7 +31,10 @@ def extract_text(file_path: Path, content_type: str) -> str:
                 print("⚠️ No selectable text found — using OCR fallback.")
                 images = convert_from_path(str(file_path))
                 ocr_text = "\n".join([pytesseract.image_to_string(img) for img in images])
+                if not ocr_text.strip():
+                    raise ValueError("OCR failed: No extractable text found in image-only PDF.")
                 return ocr_text
+
         except Exception as e:
             raise ValueError(f"PDF extraction failed: {e}")
     
@@ -39,15 +42,30 @@ def extract_text(file_path: Path, content_type: str) -> str:
         doc = docx.Document(str(file_path))
         return "\n".join(para.text for para in doc.paragraphs if para.text.strip())
 
-    elif file_path.suffix == ".txt":
-        return file_path.read_text(encoding="utf-8")
+    elif content_type == "text/plain" or file_path.suffix == ".txt":
+        try:
+            return file_path.read_text(encoding="utf-8")
+        except Exception as e:
+            raise ValueError(f"Failed to read .txt file: {e}")
+
 
     raise ValueError("Unsupported file type")
 
 @router.get("/extract/{filename}")
 def extract_existing_file(filename: str, session_id: Optional[str] = Query(None)):
     filename = unquote(filename)
+    # Try direct path first
     file_path = UPLOAD_DIR / filename
+
+    # If not found, check inside user subfolders
+    if not file_path.exists():
+        for subdir in UPLOAD_DIR.iterdir():
+            if subdir.is_dir():
+                possible_path = subdir / filename
+                if possible_path.exists():
+                    file_path = possible_path
+                    break
+
 
     print("🔍 Requested filename:", filename)
     print("📁 Full path being searched:", file_path.resolve())

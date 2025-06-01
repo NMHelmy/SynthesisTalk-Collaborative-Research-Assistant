@@ -6,6 +6,7 @@ import { uploadDocument, listFiles } from "../api/api";
 import { saveChatToFirestore, loadChatsFromFirestore } from "../chatStorage";
 import { collection, query, getDocs, deleteDoc, addDoc, Timestamp } from "firebase/firestore";
 import InsightsChart from "../components/InsightsChart";
+import { FiArrowDown } from "react-icons/fi";
 
 export default function ChatPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -25,8 +26,7 @@ export default function ChatPage() {
   const [showFiles, setShowFiles] = useState(false);
   const [notes, setNotes] = useState([]);
   const [showNotesPanel, setShowNotesPanel] = useState(false);
-
-  
+  const bottomRef = useRef(null);
 
   useEffect(() => {
     let id = localStorage.getItem("sessionId");
@@ -49,6 +49,9 @@ export default function ChatPage() {
     fetchFiles();
   }, []);
 
+  const scrollToBottom = () => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
 
   const handleLogout = async () => {
     await auth.signOut();
@@ -189,6 +192,19 @@ const fetchFiles = async () => {
         // Step 2: Extract text from each uploaded file
         for (const file of uploadedFilesToSend) {
           displayMessage += `📄 <a href="${file.url}" target="_blank">${file.name}</a>\n`;
+
+          try {
+            const filename = encodeURIComponent(file.name);
+            const res = await fetch(`http://localhost:8000/api/extract/${filename}?session_id=${sessionId}`);
+            const data = await res.json();
+            if (data.text) {
+              extractedTexts.push(`--- Content of ${file.name} ---\n${data.text}`);
+            } else {
+              extractedTexts.push(`⚠️ Could not extract text from ${file.name}.`);
+            }
+          } catch (err) {
+            extractedTexts.push(`❌ Error extracting ${file.name}: ${err.message}`);
+          }
         }
 
         // Step 3: Combine for LLM
@@ -289,7 +305,8 @@ const fetchFiles = async () => {
 
 
   const handleUploadFile = (e) => {
-    const files = Array.from(e.target.files || []);
+    const allowedTypes = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain"];
+    const files = Array.from(e.target.files || []).filter(f => allowedTypes.includes(f.type));
     setUploadedFilesToSend((prev) => [...prev, ...files]);
   };
 
@@ -310,6 +327,13 @@ const fetchFiles = async () => {
       await ensureFilesAreUploaded();
 
       const extractedTexts = [];
+      let fallbackPrompt = input.trim();
+      if (!fallbackPrompt && messages.length > 0) {
+        const lastMessage = [...messages].reverse().find((m) => m.role === "assistant" || m.role === "user");
+        if (lastMessage) {
+          fallbackPrompt = lastMessage.content;
+        }
+      }
 
       for (const file of uploadedFilesToSend) {
         const filename = encodeURIComponent(file.name);
@@ -318,16 +342,22 @@ const fetchFiles = async () => {
 
         if (data.text) {
           extractedTexts.push(`--- Content of ${file.name} ---\n${data.text}`);
+        } else {
+          extractedTexts.push(`⚠️ ${file.name} could not be read: ${data.detail || "Unknown error."}`);
         }
       }
 
-      const prompt = `Summarize the key points from the following documents:\n\n${extractedTexts.join("\n\n")}`;
+      const prompt = `Summarize the key points from the following documents:\n\n${extractedTexts.join("\n\n")}\n\n${fallbackPrompt}`;
       const filenamesText = uploadedFilesToSend.map(f => f.name).join(", ");
 
-      const newMessages = [
-        { role: "user", content: filenamesText },
-        { role: "user", content: "Summarize key points" }
-      ];
+      const userSource = fallbackPrompt.trim() || "[No input]";
+      const newMessages = [];
+
+      if (fallbackPrompt.trim()) {
+        newMessages.push({ role: "user", content: fallbackPrompt.trim() });
+      }
+      newMessages.push({ role: "user", content: "Summarize key points" });
+
       setMessages(prev => [...prev, ...newMessages]);
 
       const res = await fetch("http://localhost:8000/api/chat", {
@@ -441,21 +471,25 @@ const handleExplain = async (messageIndex) => {
 
   const handleWebSearch = async () => {
     await ensureFilesAreUploaded();
-    if (!input.trim() && messages.length === 0) {
+
+    let queryText = (input || "").trim();
+
+    if (!queryText && messages.length > 0) {
+      const last = [...messages].reverse().find((m) => m.role === "user" || m.role === "assistant");
+      if (last) queryText = last.content.trim();
+    }
+    if (!queryText) {
       alert("Please type a query or start a conversation first.");
       return;
     }
 
     setLoading(true);
 
-    // 1) Insert the user's actual question
-    const questionMessage = { role: "user", content: input.trim() };
-    // 2) Immediately follow with a "Web Search Results" marker
-    const markerMessage  = { role: "user", content: "Web Search Results" };
+    const questionMessage = { role: "user", content: queryText };  // ✅ Now it's defined
+    const markerMessage = { role: "user", content: "Web Search Results" };
     setMessages((prev) => [...prev, questionMessage, markerMessage]);
 
     try {
-      const queryText = input.trim() || "";
       const res = await fetch("http://127.0.0.1:8000/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -463,7 +497,6 @@ const handleExplain = async (messageIndex) => {
       });
       const { results } = await res.json();
 
-      // 1c. Append an “assistant” message with the snippets
       const assistantMessage = { role: "assistant", content: results };
       setMessages((prev) => [...prev, assistantMessage]);
     } catch (err) {
@@ -752,8 +785,17 @@ const handleExplain = async (messageIndex) => {
               ))
             )}
             {loading && <div className="text-white text-sm">Thinking...</div>}
+            <div ref={bottomRef}></div>
           </div>
-
+          <div className="flex justify-center mb-4">
+            <button
+              onClick={scrollToBottom}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-full shadow"
+              title="Scroll to bottom"
+            >
+              <FiArrowDown size={20} />
+            </button>
+          </div>
           {/* Footer: input area, mode buttons, tool buttons */}
           <footer className="w-full max-w-2xl bg-[#9b9b9b] rounded-lg px-6 py-6 text-black shadow-md mt-4">
             {uploadedFilesToSend.length > 0 && (
@@ -806,7 +848,6 @@ const handleExplain = async (messageIndex) => {
                 <img src="/assets/send_icon.png" alt="Send" className="w-5 h-5" />
               </button>
             </div>
-
             <div className="flex justify-center gap-4 text-sm font-medium mb-4">
               {["normal", "cot", "react"].map((mode) => (
                 <button
@@ -836,163 +877,8 @@ const handleExplain = async (messageIndex) => {
                 🔍 Web Search Results
               </button>
               <button
+                onClick={handleSummarizedKeyPoints}
                 className="bg-white px-3 py-1 rounded shadow"
-                onClick={async () => {
-                  setInput("Summarize key points");
-                  if (uploadedFilesToSend.length === 0 && messages.length === 0) {
-                    alert("Please upload a document or start a conversation first.");
-                    return;
-                  }
-
-                  setLoading(true);
-
-                  if (uploadedFilesToSend.length > 0) {
-                    try {
-                      const formData = new FormData();
-                      uploadedFilesToSend.forEach((file) =>
-                        formData.append("files", file)
-                      );
-
-                      await fetch("http://localhost:8000/api/upload", {
-                        method: "POST",
-                        body: formData,
-                      });
-
-                      for (const file of uploadedFilesToSend) {
-                        try {
-                          await addDoc(collection(db, "documents"), {
-                            filename: file.name,
-                            uploadedBy: user?.uid || "anonymous",
-                            uploadedAt: Timestamp.now(),
-                            downloadUrl: `http://localhost:8000/uploads/${encodeURIComponent(
-                              file.name
-                            )}`,
-                          });
-                        } catch (err) {
-                          console.error("Failed to save document metadata:", err);
-                        }
-                      }
-
-                      const extractedTexts = [];
-                      for (const file of uploadedFilesToSend) {
-                        const filename = encodeURIComponent(file.name);
-                        const res = await fetch(
-                          `http://localhost:8000/api/extract/${filename}`
-                        );
-                        const data = await res.json();
-
-                        if (data.text) {
-                          extractedTexts.push(
-                            `--- Content of ${file.name} ---\n${data.text}`
-                          );
-                        }
-                      }
-
-                      const prompt = `Summarize the key points from the following documents:\n\n${extractedTexts.join(
-                        "\n\n"
-                      )}`;
-                      const filenamesText = uploadedFilesToSend
-                        .map((f) => f.name)
-                        .join(", ");
-
-                      const newMessages = [
-                        { role: "user", content: filenamesText },
-                        { role: "user", content: "Summarize key points" },
-                      ];
-                      setMessages((prev) => [...prev, ...newMessages]);
-
-                      const res = await fetch(
-                        "http://localhost:8000/api/chat",
-                        {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            session_id: sessionId,
-                            prompt,
-                            mode: reasoningMode,
-                          }),
-                        }
-                      );
-
-                      const data = await res.json();
-
-                      if (data.response) {
-                        const assistantMessage = {
-                          role: "assistant",
-                          content: `📌 **Key Points from ${filenamesText}:**\n${data.response}`,
-                        };
-                        const finalMessages = [
-                          ...messages,
-                          ...newMessages,
-                          assistantMessage,
-                        ];
-                        setMessages(finalMessages);
-
-                        await saveChatHistory(chatId, filenamesText, finalMessages);
-                      } else {
-                        alert("Summarization failed: " + data.error);
-                      }
-
-                      setInput("");
-                      setUploadedFilesToSend([]);
-                    } catch (err) {
-                      console.error(err);
-                      alert("Failed to summarize uploaded files.");
-                    }
-                  } else {
-                    // If no uploaded files, summarize the conversation
-                    try {
-                      const context = messages
-                        .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
-                        .join("\n\n");
-
-                      const res = await fetch(
-                        "http://localhost:8000/api/chat",
-                        {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            session_id: sessionId,
-                            prompt: `Please extract and summarize the key points from the following conversation or content:\n\n${context}\n\nReturn them as concise bullet points.`,
-                            mode: reasoningMode,
-                          }),
-                        }
-                      );
-
-                      const data = await res.json();
-
-                      if (data.response) {
-                        const userMsg = {
-                          role: "user",
-                          content: "Summarize key points",
-                        };
-                        const assistantMsg = {
-                          role: "assistant",
-                          content: `📌 **Key Points:**\n${data.response}`,
-                        };
-                        const finalMessages = [
-                          ...messages,
-                          userMsg,
-                          assistantMsg,
-                        ];
-                        setMessages(finalMessages);
-
-                        await saveChatHistory(
-                          chatId,
-                          "Summarized Chat",
-                          finalMessages
-                        );
-                        setInput("");
-                      } else {
-                        alert("Summarization failed: " + data.error);
-                      }
-                    } catch (err) {
-                      alert("Failed to summarize.");
-                    }
-                  }
-
-                  setLoading(false);
-                }}
               >
                 📄 Summarized key points
               </button>
@@ -1003,6 +889,7 @@ const handleExplain = async (messageIndex) => {
                 📊 Insights Visualized
               </button>
             </div>
+            
           </footer>
         </div>
 
@@ -1042,6 +929,8 @@ const handleExplain = async (messageIndex) => {
 
         </div>
       </div>
+      {/* Scroll to Bottom Button */}
+      
       {/* ─── End of parent container ─── */}
       {/* Profile Modal */}
       {showProfile && (
