@@ -1,7 +1,5 @@
-# SynthesisTalk - Paper Mind
+# SynthesisTalk - Paper Mind 
 #### Nour Helmy - Mai Waheed - Farida Mohamed
-
---- 
 
 ## Table of Contents
 
