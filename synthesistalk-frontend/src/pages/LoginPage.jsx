@@ -30,9 +30,17 @@ export default function LoginPage() {
     setGeneralMessage("");
 
     try {
-      await signInWithEmailAndPassword(auth, formData.email, formData.password);
-      setGeneralMessage("Login successful. Redirecting...");
-      setTimeout(() => navigate("/chat"), 1000);
+      const result = await signInWithEmailAndPassword(auth, formData.email, formData.password);
+
+if (!result.user.emailVerified) {
+  await auth.signOut(); // Log out unverified users
+  setGeneralMessage("Please verify your email before logging in.");
+  return;
+}
+
+setGeneralMessage("Login successful. Redirecting...");
+setTimeout(() => navigate("/chat"), 1000);
+
     } catch (error) {
       const code = error.code;
       if (code === "auth/invalid-email") {
@@ -139,7 +147,7 @@ export default function LoginPage() {
               onClick={() => setShowPassword(!showPassword)}
               className="ml-2 text-white focus:outline-none"
             >
-              {showPassword ? <FiEyeOff className="text-xl" /> : <FiEye className="text-xl" />}
+              {showPassword ? <FiEye className="text-xl" /> : <FiEyeOff className="text-xl" />}
             </button>
           </div>
           {passwordError && <p className="text-sm text-red-500 mt-1">{passwordError}</p>}

@@ -72,70 +72,82 @@ export default function ChatPage() {
   };
 
   const handleVisualize = async () => {
-  let cleanedInput = input.replace(/\r?\n/g, "\n").trim();
+    await ensureFilesAreUploaded();
+    let cleanedInput = input.replace(/\r?\n/g, "\n").trim();
 
-  // Use last assistant message if input is empty
-  if (!cleanedInput) {
-    const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant" && !m.type);
-    if (!lastAssistant) {
-      alert("No input or assistant response available to visualize.");
-      return;
-    }
-    cleanedInput = lastAssistant.content.trim();
-  }
-
-  // Step 1: Add the assistant response as user message + follow-up
-  const userDataMessage = { role: "user", content: cleanedInput };
-  const userPromptMessage = { role: "user", content: "Visualize this data" };
-
-  const initialMessages = [...messages, userDataMessage, userPromptMessage];
-  setMessages(initialMessages);
-
-  // Step 2: Send to backend
-  const res = await fetch("http://127.0.0.1:8000/api/visualize", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text: cleanedInput }),
-  });
-
-  const { data } = await res.json();
-
-  // Step 3: Display result
-  if (data && Array.isArray(data) && data.length > 0) {
-    const chartMessage = {
-      role: "assistant",
-      type: "chart",
-      data,
-    };
-    const finalMessages = [...initialMessages, chartMessage];
-    setMessages(finalMessages);
-    const title = cleanedInput.split("\n")[0].slice(0, 40);
-    await saveChatHistory(chatId, title, finalMessages);
-  } else {
-    const failMessage = {
-      role: "assistant",
-      content: "Unable to extract insights. Try being more specific or numeric in your questions.",
-    };
-    const finalMessages = [...initialMessages, failMessage];
-    setMessages(finalMessages);
-    await saveChatHistory(chatId, "Unvisualized Chart", finalMessages);
-  }
-
-  setInput(""); // optional
-};
-
-  
-  const fetchFiles = async () => {
-    try {
-      const response = await fetch("http://localhost:8000/api/files");
-      const data = await response.json();
-      if (data.files) {
-        setFiles(data.files);
+    if (!cleanedInput) {
+      const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant" && !m.type);
+      if (!lastAssistant) {
+        alert("No input or assistant response available to visualize.");
+        return;
       }
-    } catch (error) {
-      console.error("Error fetching files:", error);
+      cleanedInput = lastAssistant.content.trim();
     }
+
+    const userDataMessage = { role: "user", content: cleanedInput };
+    const userPromptMessage = { role: "user", content: "Visualize this data" };
+
+    const initialMessages = [...messages, userDataMessage, userPromptMessage];
+    setMessages(initialMessages);
+
+    const res = await fetch("http://127.0.0.1:8000/api/visualize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: cleanedInput }),
+    });
+
+    const { data } = await res.json();
+
+    if (data && Array.isArray(data) && data.length > 0) {
+      const chartSummary = data.map(d => `${d.label}: ${d.value}`).join('\n');
+      const chartMessage = {
+        role: "assistant",
+        type: "chart",
+        data,
+      };
+      const finalMessages = [...initialMessages, chartMessage];
+      setMessages(finalMessages);
+      const title = cleanedInput.split("\n")[0].slice(0, 40);
+      await saveChatHistory(chatId, title, finalMessages);
+
+      // ✅ Restore updated session to backend
+      await fetch("http://localhost:8000/api/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: chatId, messages: finalMessages }),
+      });
+
+    } else {
+      const failMessage = {
+        role: "assistant",
+        content: "Unable to extract insights. Try being more specific or numeric in your questions.",
+      };
+      const finalMessages = [...initialMessages, failMessage];
+      setMessages(finalMessages);
+      await saveChatHistory(chatId, "Unvisualized Chart", finalMessages);
+
+      // ✅ Also restore failed state
+      await fetch("http://localhost:8000/api/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: chatId, messages: finalMessages }),
+      });
+    }
+
+    setInput("");
   };
+
+
+const fetchFiles = async () => {
+  if (!user?.uid) return;
+  try {
+    const response = await fetch(`http://localhost:8000/api/files/${user.uid}`);
+    const data = await response.json();
+    if (data.files) setFiles(data.files);
+  } catch (error) {
+    console.error("Error fetching files:", error);
+  }
+};
 
   const handleSend = async () => {
     if (!input.trim() && uploadedFilesToSend.length === 0) return;
@@ -151,10 +163,11 @@ export default function ChatPage() {
         // Step 1: Upload the files
         const formData = new FormData();
         uploadedFilesToSend.forEach((file) => formData.append("files", file));
-        await fetch("http://localhost:8000/api/upload", {
+        await fetch(`http://localhost:8000/api/upload/${user.uid}`, {
           method: "POST",
           body: formData,
         });
+
         // Save metadata of uploaded files to Firestore
         for (const file of uploadedFilesToSend) {
           try {
@@ -175,19 +188,7 @@ export default function ChatPage() {
 
         // Step 2: Extract text from each uploaded file
         for (const file of uploadedFilesToSend) {
-          const filename = encodeURIComponent(file.name);
-          const res = await fetch(`http://localhost:8000/api/extract/${filename}`);
-          if (!res.ok) {
-            const error = await res.json();
-            console.error("Extraction error:", error);
-            throw new Error(error.detail || "Extraction failed");
-          }
-          const data = await res.json();
-          if (data.text) {
-            extractedTexts.push(`--- Content of ${file.name} ---\n${data.text}`);
-          }
-          // Show file in chat
-          displayMessage += `📄 ${file.name}\n`;
+          displayMessage += `📄 <a href="${file.url}" target="_blank">${file.name}</a>\n`;
         }
 
         // Step 3: Combine for LLM
@@ -256,6 +257,37 @@ export default function ChatPage() {
     setLoading(false);
   };
 
+  const ensureFilesAreUploaded = async () => {
+    if (uploadedFilesToSend.length === 0 || !user?.uid) return;
+
+    const formData = new FormData();
+    uploadedFilesToSend.forEach((f) => formData.append("files", f));
+
+    // 🔁 Upload to backend
+    await fetch(`http://localhost:8000/api/upload/${user.uid}`, {
+      method: "POST",
+      body: formData,
+    });
+
+    // 🔁 Save each file’s metadata to Firestore
+    for (const f of uploadedFilesToSend) {
+      try {
+        await addDoc(collection(db, "documents"), {
+          filename: f.name,
+          uploadedBy: user.uid,
+          uploadedAt: Timestamp.now(),
+          downloadUrl: `http://localhost:8000/uploads/${user.uid}/${encodeURIComponent(f.name)}`
+        });
+      } catch (err) {
+        console.error("🔥 Failed to save document to Firestore:", err);
+      }
+    }
+
+    // 🔁 Refresh sidebar list
+    await fetchFiles();
+  };
+
+
   const handleUploadFile = (e) => {
     const files = Array.from(e.target.files || []);
     setUploadedFilesToSend((prev) => [...prev, ...files]);
@@ -266,57 +298,68 @@ export default function ChatPage() {
   };
 
   const handleSummarizedKeyPoints = async () => {
-    if (uploadedFilesToSend.length === 0) {
-      alert("Please upload a document first.");
+    if (uploadedFilesToSend.length === 0 && messages.length === 0) {
+      alert("Please upload a document or start a conversation first.");
       return;
     }
 
     setLoading(true);
 
     try {
-      // Step 1: Upload the document(s)
-      const formData = new FormData();
-      uploadedFilesToSend.forEach((file) => formData.append("files", file));
-      await fetch("http://localhost:8000/api/upload", {
-        method: "POST",
-        body: formData,
-      });
-      await fetchFiles(); // refresh sidebar
+      // ✅ Ensure all uploaded files are saved to backend and Firestore
+      await ensureFilesAreUploaded();
 
-      // Step 2: Extract text
-      let extractedTexts = [];
+      const extractedTexts = [];
+
       for (const file of uploadedFilesToSend) {
         const filename = encodeURIComponent(file.name);
-        const res = await fetch(`http://localhost:8000/api/extract/${filename}`);
+        const res = await fetch(`http://localhost:8000/api/extract/${filename}?session_id=${sessionId}`);
         const data = await res.json();
+
         if (data.text) {
-          extractedTexts.push(data.text);
+          extractedTexts.push(`--- Content of ${file.name} ---\n${data.text}`);
         }
       }
 
-      // Step 3: Send summarization prompt to LLM
-      const finalPrompt = `Summarize the key points from this document:\n\n${extractedTexts.join("\n\n")}`;
-      const displayMessage = uploadedFilesToSend.map(f => f.name).join(", ");
+      const prompt = `Summarize the key points from the following documents:\n\n${extractedTexts.join("\n\n")}`;
+      const filenamesText = uploadedFilesToSend.map(f => f.name).join(", ");
 
-      setMessages(prev => [...prev, { role: "user", content: displayMessage }]);
+      const newMessages = [
+        { role: "user", content: filenamesText },
+        { role: "user", content: "Summarize key points" }
+      ];
+      setMessages(prev => [...prev, ...newMessages]);
 
       const res = await fetch("http://localhost:8000/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sessionId, prompt: finalPrompt, mode: reasoningMode }),
+        body: JSON.stringify({
+          session_id: sessionId,
+          prompt,
+          mode: reasoningMode
+        }),
       });
 
       const data = await res.json();
+
       if (data.response) {
-        setMessages(prev => [...prev, { role: "assistant", content: data.response }]);
+        const assistantMessage = {
+          role: "assistant",
+          content: `📌 **Key Points from ${filenamesText}:**\n${data.response}`
+        };
+        const finalMessages = [...messages, ...newMessages, assistantMessage];
+        setMessages(finalMessages);
+
+        await saveChatHistory(chatId, filenamesText, finalMessages);
       } else {
-        alert("Error: " + data.error);
+        alert("Summarization failed: " + data.error);
       }
 
+      setInput("");
       setUploadedFilesToSend([]);
-    } catch (error) {
-      console.error(error);
-      alert("Failed to summarize document.");
+    } catch (err) {
+      console.error(err);
+      alert("Failed to summarize uploaded files.");
     }
 
     setLoading(false);
@@ -397,6 +440,7 @@ const handleExplain = async (messageIndex) => {
 };
 
   const handleWebSearch = async () => {
+    await ensureFilesAreUploaded();
     if (!input.trim() && messages.length === 0) {
       alert("Please type a query or start a conversation first.");
       return;
@@ -430,6 +474,26 @@ const handleExplain = async (messageIndex) => {
       setLoading(false);
     }
   };
+
+  const handleExport = async (format = "pdf") => {
+    const res = await fetch(`http://localhost:8000/api/export`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, chat_id: chatId, format }),
+    });
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const chatTitle = messages.find((m) => m.role === "user")?.content?.slice(0, 40).replace(/[^a-zA-Z0-9]/g, "_") || "SynthesisTalk";
+    link.download = `${chatTitle}.${format}`;
+    link.href = url;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
 
   return (
     <div
@@ -480,38 +544,42 @@ const handleExplain = async (messageIndex) => {
                       <span
                         className="truncate max-w-[160px] cursor-pointer hover:underline"
                         onClick={() =>
-                          window.open(
-                            `http://localhost:8000/uploads/${encodeURIComponent(file.filename)}`,
-                            "_blank"
-                          )
+                          window.open(`http://localhost:8000/uploads/${user.uid}/${encodeURIComponent(file.filename)}`, "_blank")
                         }
                       >
                         {file.filename}
                       </span>
-                      <button
-                        onClick={async () => {
-                          try {
-                            const response = await fetch(
-                              `http://localhost:8000/api/files/${encodeURIComponent(file.filename)}`,
-                              { method: "DELETE" }
-                            );
-                            if (!response.ok) {
-                              const error = await response.json();
-                              alert(`Failed to delete: ${error.detail || "Unknown error"}`);
-                            } else {
-                              fetchFiles();
-                            }
-                          } catch (err) {
-                            console.error("Delete failed:", err);
-                            alert("Failed to delete file. Please try again.");
-                          }
-                        }}
-                        className="text-red-400 hover:text-red-600 text-xs ml-2"
-                        title="Delete file"
-                      >
-                        🗑️
-                      </button>
+
+                      <div className="flex gap-2 items-center ml-2">
+                        <button
+                          onClick={async () => {
+                            const selectedFile = {
+                              name: file.filename,
+                              url: `http://localhost:8000/uploads/${user.uid}/${encodeURIComponent(file.filename)}`
+                            };
+                            setUploadedFilesToSend((prev) => [...prev, selectedFile]);
+                          }}
+                          title="Queue this PDF to chat"
+                          className="text-green-400 hover:text-green-600 text-xs"
+                        >
+                          💬
+                        </button>
+                        <button
+                          onClick={async () => {
+                            const response = await fetch(`http://localhost:8000/api/files/${encodeURIComponent(file.filename)}`, {
+                              method: "DELETE",
+                            });
+                            if (response.ok) fetchFiles();
+                            else alert("Failed to delete.");
+                          }}
+                          className="text-red-400 hover:text-red-600 text-xs"
+                          title="Delete file"
+                        >
+                          🗑️
+                        </button>
+                      </div>
                     </li>
+
                   ))}
                 </ul>
               )}
@@ -527,10 +595,21 @@ const handleExplain = async (messageIndex) => {
                   <div
                     key={chat.id}
                     className="p-3 rounded-lg bg-[#1e1e1e] hover:bg-[#2c2c2c] shadow cursor-pointer transition duration-200"
-                    onClick={() => {
+                    onClick={async () => {
                       setMessages(chat.messages);
                       setChatId(chat.id);
                       setInput("");
+
+                      // Update sessionId to match selected chat
+                      setSessionId(chat.id);
+                      localStorage.setItem("sessionId", chat.id);
+
+                      // Send message history to backend to restore export context
+                      await fetch("http://localhost:8000/api/restore", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ session_id: chat.id, messages: chat.messages }),
+                      });
                     }}
                   >
                     <div className="font-medium truncate text-sm mb-1">
@@ -572,6 +651,27 @@ const handleExplain = async (messageIndex) => {
               Logout
             </button>
           </div>
+          {/* Export Buttons */}
+          <div className="mt-6 space-y-2">
+            <button
+              onClick={() => handleExport("pdf")}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded text-sm"
+            >
+              📄 Export as PDF
+            </button>
+            <button
+              onClick={() => handleExport("docx")}
+              className="w-full bg-green-600 hover:bg-green-700 text-white py-2 rounded text-sm"
+            >
+              📝 Export as Word
+            </button>
+          </div>
+
+          {/* Logout Button */}
+          <button className="flex items-center gap-2 mt-4 text-sm text-red-500" onClick={handleLogout}>
+            <FiLogOut />
+            Logout
+          </button>
         </aside>
       )}
 

@@ -4,6 +4,7 @@ import {
   createUserWithEmailAndPassword,
   updateProfile,
   fetchSignInMethodsForEmail,
+  sendEmailVerification,
 } from "firebase/auth";
 import { auth } from "../firebase";
 import { FiUser, FiMail, FiLock, FiEye, FiEyeOff } from "react-icons/fi";
@@ -24,6 +25,7 @@ export default function SignupPage() {
   const [generalMessage, setGeneralMessage] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [showVerificationModal, setShowVerificationModal] = useState(false);
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -35,7 +37,6 @@ export default function SignupPage() {
 
     setGeneralMessage("");
   };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
 
@@ -87,8 +88,14 @@ export default function SignupPage() {
         displayName: formData.firstName,
       });
 
-      setGeneralMessage("Signup successful! Redirecting to login...");
-      setTimeout(() => navigate("/login"), 1500);
+      // ✅ Send email verification
+      await sendEmailVerification(userCredential.user);
+      setShowVerificationModal(true);
+
+      setGeneralMessage(
+        "Signup successful! A verification email has been sent. Please verify before logging in."
+      );
+
     } catch (error) {
       const code = error.code;
 
@@ -145,6 +152,22 @@ export default function SignupPage() {
           {nameError && <p className="text-sm text-red-500 mt-1">{nameError}</p>}
         </div>
 
+        {showVerificationModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-[#2c2c2c] text-white p-6 rounded shadow-lg text-center max-w-sm border border-gray-600">
+              <h2 className="text-lg font-bold mb-2">Verify Your Email</h2>
+              <p className="mb-4">A verification link has been sent to <strong>{formData.email}</strong>.</p>
+              <p>Please check your inbox and click the link to activate your account.</p>
+              <button
+                onClick={() => navigate('/login')}
+                className="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition"
+              >
+                Continue to Login
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Email */}
         <div className="flex flex-col items-start w-full">
           <div className="flex items-center w-full bg-[#5A5A5A] px-6 py-3 rounded-md shadow-lg">
@@ -182,7 +205,7 @@ export default function SignupPage() {
               onClick={() => setShowPassword(!showPassword)}
               className="ml-2 text-white focus:outline-none"
             >
-              {showPassword ? <FiEyeOff className="text-xl" /> : <FiEye className="text-xl" />}
+              {showPassword ? <FiEye className="text-xl" /> : <FiEyeOff className="text-xl" />}
             </button>
           </div>
           {passwordError && <p className="text-sm text-red-500 mt-1">{passwordError}</p>}
@@ -207,7 +230,7 @@ export default function SignupPage() {
               onClick={() => setShowConfirmPassword(!showConfirmPassword)}
               className="ml-2 text-white focus:outline-none"
             >
-              {showConfirmPassword ? <FiEyeOff className="text-xl" /> : <FiEye className="text-xl" />}
+              {showConfirmPassword ? <FiEye className="text-xl" /> : <FiEyeOff className="text-xl" />}
             </button>
           </div>
           {confirmPasswordError && <p className="text-sm text-red-500 mt-1">{confirmPasswordError}</p>}

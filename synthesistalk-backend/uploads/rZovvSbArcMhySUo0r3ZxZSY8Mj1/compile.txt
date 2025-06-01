@@ -1,0 +1,2 @@
+g++ main.cpp -o triangle -lfreeglut -lopengl32 -lglu32
+.\triangle.exe

@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "recharts": "^2.15.3",
     "tailwind-scrollbar": "^4.0.2"
   }
 }
