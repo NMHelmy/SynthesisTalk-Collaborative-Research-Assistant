@@ -8,8 +8,8 @@ DATA_PATH = "data/files.json"
 
 @router.post("/upload/{user_id}")
 async def upload_files(user_id: str, files: list[UploadFile] = File(...)):
-    user_folder = os.path.join("uploads", user_id)
-    os.makedirs(user_folder, exist_ok=True)
+    # Save files directly into flat /uploads directory
+    os.makedirs("uploads", exist_ok=True)
     os.makedirs("data", exist_ok=True)
 
     user_data_path = f"data/{user_id}_files.json"
@@ -23,7 +23,8 @@ async def upload_files(user_id: str, files: list[UploadFile] = File(...)):
 
     for file in files:
         contents = await file.read()
-        save_path = os.path.join(user_folder, file.filename)
+        save_path = os.path.join("uploads", file.filename)  
+        
         with open(save_path, "wb") as f:
             f.write(contents)
 
@@ -32,6 +33,7 @@ async def upload_files(user_id: str, files: list[UploadFile] = File(...)):
             "content": contents.decode("utf-8", errors="ignore")
         }
 
+        # Avoid duplicates in user's metadata file
         if not any(e["filename"] == entry["filename"] for e in existing):
             existing.append(entry)
             uploaded.append(file.filename)
@@ -40,4 +42,3 @@ async def upload_files(user_id: str, files: list[UploadFile] = File(...)):
         json.dump(existing, f, indent=2)
 
     return {"message": f"Uploaded files: {uploaded}"}
-
