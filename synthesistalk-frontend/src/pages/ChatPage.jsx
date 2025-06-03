@@ -113,11 +113,20 @@ export default function ChatPage() {
       const title = cleanedInput.split("\n")[0].slice(0, 40);
       await saveChatHistory(chatId, title, finalMessages);
 
-      // ✅ Restore updated session to backend
+      const filteredMessages = finalMessages.map((msg) => {
+        if (msg.type === "chart") {
+          return {
+            role: "assistant",
+            content: "[Chart visualized]",
+          };
+        }
+        return msg;
+      });
+
       await fetch("http://localhost:8000/api/restore", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: chatId, messages: finalMessages }),
+        body: JSON.stringify({ session_id: chatId, messages: filteredMessages }),
       });
 
     } else {
@@ -129,7 +138,7 @@ export default function ChatPage() {
       setMessages(finalMessages);
       await saveChatHistory(chatId, "Unvisualized Chart", finalMessages);
 
-      // ✅ Also restore failed state
+      // Also restore failed state
       await fetch("http://localhost:8000/api/restore", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -315,57 +324,95 @@ const fetchFiles = async () => {
   };
 
   const handleSummarizedKeyPoints = async () => {
-    if (uploadedFilesToSend.length === 0 && messages.length === 0) {
+    if (messages.length === 0 && uploadedFilesToSend.length === 0 && !input.trim()) {
       alert("Please upload a document or start a conversation first.");
       return;
     }
 
     setLoading(true);
+    setInput("Summarize key points");
 
     try {
-      // ✅ Ensure all uploaded files are saved to backend and Firestore
       await ensureFilesAreUploaded();
-
-      const extractedTexts = [];
+      let extractedTexts = [];
       let fallbackPrompt = input.trim();
-      if (!fallbackPrompt && messages.length > 0) {
-        const lastMessage = [...messages].reverse().find((m) => m.role === "assistant" || m.role === "user");
-        if (lastMessage) {
-          fallbackPrompt = lastMessage.content;
+      let fileNamesText = uploadedFilesToSend.map(f => f.name).join(", ");
+
+      // 1. If no input or uploads, summarize last assistant message
+      if (!fallbackPrompt && uploadedFilesToSend.length === 0) {
+        const lastAssistant = [...messages].reverse().find(m => m.role === "assistant");
+        if (!lastAssistant || !lastAssistant.content.trim()) {
+          alert("No content to summarize.");
+          setLoading(false);
+          return;
         }
+
+        fallbackPrompt = lastAssistant.content.trim();
+
+        // Show the last assistant message as a user message + 'Summarize key points'
+        const displayMsg = { role: "user", content: fallbackPrompt };
+        const markerMsg = { role: "user", content: "Summarize key points" };
+        const all = [...messages, displayMsg, markerMsg];
+        setMessages(all);
+
+        const res = await fetch("http://localhost:8000/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: sessionId,
+            prompt: `Summarize the key points of:\n\n${fallbackPrompt}`,
+            mode: reasoningMode
+          }),
+        });
+
+        const data = await res.json();
+
+        if (data.response) {
+          const assistantMsg = { role: "assistant", content: `📌 **Summary:**\n${data.response}` };
+          const final = [...all, assistantMsg];
+          setMessages(final);
+          await saveChatHistory(chatId, "Key Summary", final);
+        } else {
+          alert("Summarization failed: " + data.error);
+        }
+
+        setInput("");
+        setUploadedFilesToSend([]);
+        setLoading(false);
+        return;
       }
 
+      // 2. Uploaded files or typed input: show filenames + input, but send extracted content
       for (const file of uploadedFilesToSend) {
         const filename = encodeURIComponent(file.name);
         const res = await fetch(`http://localhost:8000/api/extract/${filename}?session_id=${sessionId}`);
         const data = await res.json();
-
         if (data.text) {
           extractedTexts.push(`--- Content of ${file.name} ---\n${data.text}`);
         } else {
-          extractedTexts.push(`⚠️ ${file.name} could not be read: ${data.detail || "Unknown error."}`);
+          extractedTexts.push(`⚠️ Could not extract text from ${file.name}`);
         }
       }
 
-      const prompt = `Summarize the key points from the following documents:\n\n${extractedTexts.join("\n\n")}\n\n${fallbackPrompt}`;
-      const filenamesText = uploadedFilesToSend.map(f => f.name).join(", ");
+      const backendPrompt = extractedTexts.join("\n\n") + (fallbackPrompt ? `\n\n${fallbackPrompt}` : "");
 
-      const userSource = fallbackPrompt.trim() || "[No input]";
-      const newMessages = [];
+      // 👉 Chat UI message: just filenames + input (not file contents)
+      const displayContent = [
+        uploadedFilesToSend.length > 0 ? `📄${fileNamesText}` : "",
+        fallbackPrompt
+      ].filter(Boolean).join("\n");
 
-      if (fallbackPrompt.trim()) {
-        newMessages.push({ role: "user", content: fallbackPrompt.trim() });
-      }
-      newMessages.push({ role: "user", content: "Summarize key points" });
-
-      setMessages(prev => [...prev, ...newMessages]);
+      const userMsg1 = { role: "user", content: displayContent };
+      const userMsg2 = { role: "user", content: "Summarize key points" };
+      const allMessages = [...messages, userMsg1, userMsg2];
+      setMessages(allMessages);
 
       const res = await fetch("http://localhost:8000/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_id: sessionId,
-          prompt,
+          prompt: `Summarize the key points from the following:\n\n${backendPrompt}`,
           mode: reasoningMode
         }),
       });
@@ -375,12 +422,11 @@ const fetchFiles = async () => {
       if (data.response) {
         const assistantMessage = {
           role: "assistant",
-          content: `📌 **Key Points from ${filenamesText}:**\n${data.response}`
+          content: `📌 **Summary:**\n${data.response}`
         };
-        const finalMessages = [...messages, ...newMessages, assistantMessage];
+        const finalMessages = [...allMessages, assistantMessage];
         setMessages(finalMessages);
-
-        await saveChatHistory(chatId, filenamesText, finalMessages);
+        await saveChatHistory(chatId, fileNamesText || fallbackPrompt.slice(0, 40), finalMessages);
       } else {
         alert("Summarization failed: " + data.error);
       }
@@ -389,7 +435,7 @@ const fetchFiles = async () => {
       setUploadedFilesToSend([]);
     } catch (err) {
       console.error(err);
-      alert("Failed to summarize uploaded files.");
+      alert("Failed to summarize.");
     }
 
     setLoading(false);
@@ -749,7 +795,7 @@ const handleExplain = async (messageIndex) => {
                     ${msg.role === "user" ? "bg-[#722f37] text-white self-end" : ""}
                     ${msg.role === "assistant" ? "bg-gray-300 text-black self-start" : ""}
                   `}
-                  style={{ maxWidth: msg.type === "chart" ? "100%" : "80%" }}
+                  style={{ width: msg.type === "chart" ? "100%" : "80%" }}
                 >
                   {/* Add Note / Explain buttons */}
                   <div className="flex justify-end mb-1 space-x-2">
